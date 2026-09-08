@@ -489,7 +489,7 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
     };
     const NumericFormat mtp_linear_format =
         weights_profile == WeightsProfile::Qwen38GroupwiseInt
-            ? NumericFormat::Q5G64_F16S
+            ? NumericFormat::Q4G64_F16S
             : NumericFormat::W8G32_F16S;
 
     out.mtp.input_projection = WeightPlan{

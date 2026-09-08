@@ -70,13 +70,13 @@ TEXT_CORE_TENSOR_SPECS = tuple(
 )
 DRAFT_HEAD_TENSOR_SPECS = qwen3_6_inventory.DRAFT_HEAD_TENSOR_SPECS
 
-def _q5_mtp(spec: TensorSpec) -> TensorSpec:
+def _q4_mtp(spec: TensorSpec) -> TensorSpec:
     if spec.name.startswith("mtp/") and spec.format == W8:
-        return qwen3_6_inventory.tensor_spec(spec.name, spec.shape, Q5)
+        return qwen3_6_inventory.tensor_spec(spec.name, spec.shape, Q4)
     return spec
 
 MTP_TENSOR_SPECS = tuple(
-    _q5_mtp(spec)
+    _q4_mtp(spec)
     for spec in qwen3_6_inventory.MTP_TENSOR_SPECS
 )
 VISION_TENSOR_SPECS = qwen3_6_inventory.VISION_TENSOR_SPECS

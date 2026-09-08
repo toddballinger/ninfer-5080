@@ -43,11 +43,23 @@ int q4_a16_conformance() {
     failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
                           {7168, 5120, 109U, Comparison::Sampled, false, kN7168K5120});
 
+    constexpr std::array kN14336K5120{
+        a16(1), a16(2), a16(4), a16(5), a16(16), a16(17), a16(128),
+    };
+    failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
+                          {14336, 5120, 111U, Comparison::Sampled, false, kN14336K5120});
+
     constexpr std::array kN34816K5120{
         a16(1), a16(2), a16(3), a16(4), a16(5), a16(6), a16(8), a16(16), a16(17), a16(18), a16(128),
     };
     failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
                           {34816, 5120, 113U, Comparison::Sampled, false, kN34816K5120});
+
+    constexpr std::array kN5120K10240{
+        a16(1), a16(2), a16(4), a16(5), a16(16), a16(17), a16(128),
+    };
+    failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
+                          {5120, 10240, 119U, Comparison::Sampled, false, kN5120K10240});
 
     constexpr std::array kN131072K5120{
         a16(1), a16(2), a16(3), a16(4), a16(5), a16(6), a16(7), a16(8), a16(9), a16(128),
