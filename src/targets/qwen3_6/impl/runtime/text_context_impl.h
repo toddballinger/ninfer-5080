@@ -1,3 +1,6 @@
+#include <cstdio>
+#include <cstdlib>
+
 #include "targets/qwen3_6/impl/runtime/instance.h"
 #include "targets/qwen3_6/impl/runtime/text_context.h"
 #include "targets/qwen3_6/impl/runtime/workspace_recipe.h"
@@ -752,19 +755,145 @@ void TextContext::target_verify_batch_impl(const Tensor& ids, const Tensor& cach
         Tensor flat_tokens = target_tokens.view({columns});
         ops::rmsnorm(x, *final_norm_, kCfg.rms_eps, true, flat_hidden, stream);
         ops::linear(flat_hidden, *lm_head_, flat_logits, stream);
+        if constexpr (requires { tap.capture_logits(flat_logits, stream); }) {
+            tap.capture_logits(flat_logits, stream);
+        }
         ops::argmax(flat_logits, flat_tokens, kCfg.token_domain, stream);
     }
     work_.reset();
 }
+
+
+struct NInferVerifyLogitCaptureTap {
+    // Deliberately false:
+    // run_layers() therefore does not capture hidden states.
+    // The optional capture_logits() seam remains available independently.
+    static constexpr bool enabled = false;
+
+    const char* path = nullptr;
+
+    void capture_logits(const Tensor& logits, cudaStream_t stream) const {
+        if (path == nullptr || *path == '\0') {
+            throw std::invalid_argument(
+                "NInferVerifyLogitCaptureTap: empty output path");
+        }
+
+        if (logits.dtype != DType::BF16) {
+            throw std::invalid_argument(
+                "NInferVerifyLogitCaptureTap: logits must be BF16");
+        }
+
+        if (!logits.is_contiguous()) {
+            throw std::invalid_argument(
+                "NInferVerifyLogitCaptureTap: logits must be contiguous");
+        }
+
+        const std::size_t payload_bytes = logits.bytes();
+
+        if ((payload_bytes % sizeof(std::uint16_t)) != 0) {
+            throw std::runtime_error(
+                "NInferVerifyLogitCaptureTap: invalid BF16 payload size");
+        }
+
+        std::vector<std::uint16_t> host(
+            payload_bytes / sizeof(std::uint16_t));
+
+        CUDA_CHECK(cudaMemcpyAsync(
+            host.data(),
+            logits.data,
+            payload_bytes,
+            cudaMemcpyDeviceToHost,
+            stream));
+
+        // This mode is diagnostic only.  Synchronizing here guarantees each
+        // appended record is complete before execution continues.
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        struct RecordHeader {
+            std::uint64_t magic;
+            std::uint64_t payload_bytes;
+            std::int64_t ne0;
+            std::int64_t ne1;
+            std::int64_t ne2;
+            std::int64_t ne3;
+        };
+
+        constexpr std::uint64_t kMagic =
+            UINT64_C(0x4e494e4645524c47); // "NINFERLG"
+
+        const RecordHeader header{
+            kMagic,
+            static_cast<std::uint64_t>(payload_bytes),
+            static_cast<std::int64_t>(logits.ne[0]),
+            static_cast<std::int64_t>(logits.ne[1]),
+            static_cast<std::int64_t>(logits.ne[2]),
+            static_cast<std::int64_t>(logits.ne[3]),
+        };
+
+        std::FILE* file = std::fopen(path, "ab");
+        if (file == nullptr) {
+            throw std::runtime_error(
+                "NInferVerifyLogitCaptureTap: fopen failed");
+        }
+
+        const bool header_ok =
+            std::fwrite(&header, sizeof(header), 1, file) == 1;
+
+        const bool payload_ok =
+            payload_bytes == 0 ||
+            std::fwrite(host.data(), 1, payload_bytes, file) ==
+                payload_bytes;
+
+        const int close_rc = std::fclose(file);
+
+        if (!header_ok || !payload_ok || close_rc != 0) {
+            throw std::runtime_error(
+                "NInferVerifyLogitCaptureTap: write failed");
+        }
+    }
+};
 
 void TextContext::target_verify_batch(const Tensor& ids, const Tensor& cache_positions,
                                       const Tensor& rope_positions, const Tensor& valid_columns,
                                       const Tensor& kv_table_rows, const Tensor& linear_state_slots,
                                       ops::GqaExecutionEnvelope envelope, Tensor& hidden,
                                       Tensor& logits, Tensor& target_tokens) {
+    const char* capture_path =
+        std::getenv("NINFER_CAPTURE_VERIFY_LOGITS");
+
+    if (capture_path != nullptr && *capture_path != '\0') {
+        NInferVerifyLogitCaptureTap tap{capture_path};
+
+        target_verify_batch_impl(
+            ids,
+            cache_positions,
+            rope_positions,
+            valid_columns,
+            kv_table_rows,
+            linear_state_slots,
+            envelope,
+            hidden,
+            logits,
+            target_tokens,
+            tap);
+
+        return;
+    }
+
     NullTap tap;
-    target_verify_batch_impl(ids, cache_positions, rope_positions, valid_columns, kv_table_rows,
-                             linear_state_slots, envelope, hidden, logits, target_tokens, tap);
+
+    target_verify_batch_impl(
+        ids,
+        cache_positions,
+        rope_positions,
+        valid_columns,
+        kv_table_rows,
+        linear_state_slots,
+        envelope,
+        hidden,
+        logits,
+        target_tokens,
+        tap);
 }
 
 void TextContext::target_verify_batch(const Tensor& ids, const Tensor& cache_positions,
@@ -1234,9 +1363,9 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                 tap.capture_positions(positions, s);
             }
 
-            Tensor xf = prefill_hidden_.data != nullptr
-                            ? matrix_window(prefill_hidden_, len)
-                            : work_.alloc(DType::BF16, {kCfg.hidden, len});
+            // Full-chunk normalized hidden is temporary and belongs in the
+            // prefill workspace. Only its final column is retained persistently.
+            Tensor xf = work_.alloc(DType::BF16, {kCfg.hidden, len});
             ops::rmsnorm(x, *final_norm_, kCfg.rms_eps, true, xf, s);
 
             if (is_last) {
@@ -1344,6 +1473,16 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                 const Tensor checkpoint_hidden = xf.slice(1, len - 1, 1);
                 CUDA_CHECK(cudaMemcpyAsync(rewrite_checkpoint_hidden_output_->data,
                                            checkpoint_hidden.data, checkpoint_hidden.bytes(),
+                                           cudaMemcpyDeviceToDevice, s));
+            }
+
+            if (is_last) {
+                require_tensor_shape(prefill_hidden_, DType::BF16, {kCfg.hidden, 1},
+                                     "persistent prefill hidden tail");
+                const Tensor final_prefill_hidden = xf.slice(1, len - 1, 1);
+                CUDA_CHECK(cudaMemcpyAsync(prefill_hidden_.data,
+                                           final_prefill_hidden.data,
+                                           final_prefill_hidden.bytes(),
                                            cudaMemcpyDeviceToDevice, s));
             }
         }

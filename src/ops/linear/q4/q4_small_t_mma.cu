@@ -55,6 +55,49 @@ using Qwen38DownGeometry   = Q4LinearGeometry<5120, 17408>;
 using Qwen38GdnOutGeometry = Q4LinearGeometry<5120, 6144>;
 using Qwen38HeadGeometry   = Q4LinearGeometry<248320, 5120>;
 
+
+void q4_small_t_mma_prewarm() {
+    cudaFuncAttributes attr{};
+
+    // Force CUDA residency for the Qwen3.8 Q4 small-T module before
+    // explicit KV/runtime capacity is resolved. These are the T=4
+    // specializations reached by target verification / speculative decode.
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_small_t_mma_kernel<
+            FullGeometry,
+            8,
+            4>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_small_t_mma_kernel<
+            OptimizedGeometry,
+            8,
+            4>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_small_t_mma_kernel<
+            Qwen38DownGeometry,
+            8,
+            4>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_small_t_mma_kernel<
+            Qwen38GdnOutGeometry,
+            8,
+            4>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_small_t_mma_kernel<
+            Qwen38HeadGeometry,
+            8,
+            4>));
+}
+
 void launch_q4_draft_head_small_t(const Tensor& x, const Weight& weight, Tensor& out,
                                   cudaStream_t stream) {
     if (matches<FullGeometry>(x, weight) && x.ne[1] <= kLastFullT) {

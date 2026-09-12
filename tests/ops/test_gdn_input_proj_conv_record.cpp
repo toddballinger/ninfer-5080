@@ -238,7 +238,7 @@ int run_q4_q5() {
                          std::uint32_t seed) {
         const std::size_t snapshot_bytes =
             ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-                kQueryRows, kKeyRows, kValueRows, batch, width, width);
+                value_z.view().qtype, kQueryRows, kKeyRows, kValueRows, batch, width, width);
         const std::size_t record_bytes = ops::gdn_input_proj_conv_record_workspace_capacity_bytes(
             kQueryRows, kKeyRows, kValueRows, batch, width, width);
         return run_case(

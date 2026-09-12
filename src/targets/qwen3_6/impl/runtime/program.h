@@ -257,6 +257,9 @@ public:
     std::size_t graph_observed_bytes = 0;
     const WorkspacePlan workspace_plan;
 
+    // One owning runtime allocation avoids a second near-capacity cudaMalloc.
+    // persistent/workspace_storage are non-owning DeviceArena views into it.
+    DeviceBuffer runtime_backing;
     DeviceArena persistent;
     DeviceArena workspace_storage;
     WorkspaceArena work;

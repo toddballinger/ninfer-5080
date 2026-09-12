@@ -233,6 +233,79 @@ void gqa_kv_append_launch_for(const Tensor& k, const Tensor& v, const Tensor& po
 
 } // namespace
 
+
+void gqa_q4_prefill_prewarm() {
+    cudaFuncAttributes attr{};
+
+    // --------------------------------------------------------
+    // Q4 prompt-attention kernels requiring enlarged dynamic SMEM.
+    // --------------------------------------------------------
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        gqa_attention_prefill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillDirectMetadata>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        kGqaPrefillI8SmemBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        gqa_attention_prefill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<false>>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        kGqaPrefillI8SmemBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        gqa_attention_prefill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<true>>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        kGqaPrefillI8SmemBytes));
+
+
+    // --------------------------------------------------------
+    // Force module/kernel residency for Q4 KV append variants.
+    // Long prompt prefill uses the page kernel for KVHeads==2
+    // and tokens>=128; small slices can use the generic fill.
+    // --------------------------------------------------------
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_page_kernel<
+            Gqa27Geometry,
+            GqaPrefillDirectMetadata>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillDirectMetadata>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_page_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<false>>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<false>>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_page_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<true>>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        gqa_attention_prefill_fill_q4_kernel<
+            Gqa27Geometry,
+            GqaPrefillBatchMetadata<true>>));
+}
+
 void gqa_attention_prompt_attention_launch(const Tensor& q, const Tensor& positions, float scale,
                                            const PagedKVLayerView& cache, Tensor& out,
                                            cudaStream_t stream) {

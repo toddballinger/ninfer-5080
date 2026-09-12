@@ -110,7 +110,17 @@ void launch_q4(const Tensor& x, const Weight& weight, Tensor& q, Tensor& key, cu
         launch_q4_simt_route<Geometry, Q4AttnSimtR8C8Schedule>(x, weight, q, key, stream);
         return;
     default:
-        throw std::invalid_argument("attention Q4 split-output requires T in [1,16]");
+        // Correctness-first Q4/Q4 fallback for wider token batches.
+        //
+        // The grouped attention pair kernels are qualified for the
+        // production Q4/Q5 pair, but are not safe when gate/value is
+        // also Q4. The generic Q4 RowSplit SIMT kernel already supports
+        // split output at the 6144-row seam and arbitrary positive T.
+        launch_q4_simt_route<
+            Geometry,
+            Q4AttnSimtR8C8Schedule>(
+                x, weight, q, key, stream);
+        return;
     }
 }
 
@@ -220,7 +230,22 @@ template <class Geometry>
 void launch_geometry(const Tensor& x, const Weight& query_key_weight, const Weight& gate_value_weight,
                      Tensor& q, Tensor& gate, Tensor& k, Tensor& v, cudaStream_t stream) {
     launch_q4<Geometry>(x, query_key_weight, q, k, stream);
-    launch_q5<Geometry>(x, gate_value_weight, gate, v, stream);
+
+    if (gate_value_weight.qtype == QType::Q4G64_F16S) {
+        launch_q4<Geometry>(
+            x, gate_value_weight, gate, v, stream);
+        return;
+    }
+
+    if (gate_value_weight.qtype == QType::Q5G64_F16S) {
+        launch_q5<Geometry>(
+            x, gate_value_weight, gate, v, stream);
+        return;
+    }
+
+    throw std::invalid_argument(
+        "attention gate/value weight must be "
+        "Q4G64_F16S or Q5G64_F16S");
 }
 
 } // namespace

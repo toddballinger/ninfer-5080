@@ -158,6 +158,22 @@ void q4_q5_attn_input_execute_plan(const Q4Q5AttnInputPlan& plan, const Tensor& 
         throw std::invalid_argument("Q4/Q5 attention input: plan does not match exact problem");
     }
 
+    // Q4/Q4 attention-input uses the native Q4 split-output
+    // GEMV/SIMT implementation for every T. The grouped pair MMA
+    // kernels are retained exclusively for the qualified Q4/Q5 pair.
+    if (gate_value_weight.qtype == QType::Q4G64_F16S) {
+        q4_q5_attn_input_small_t_launch(
+            x,
+            query_key_weight,
+            gate_value_weight,
+            q,
+            gate,
+            k,
+            v,
+            stream);
+        return;
+    }
+
     switch (plan.schedule) {
     case Q4Q5AttnInputScheduleId::Int8Pairs: {
         if (ws == nullptr) {

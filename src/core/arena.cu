@@ -56,11 +56,70 @@ void free_pinned(void*& ptr) noexcept {
 DeviceBuffer::DeviceBuffer(std::size_t size_bytes) : bytes(size_bytes) {
     if (bytes == 0) { return; }
 
+    std::size_t free_before = 0;
+    std::size_t total_before = 0;
+    const cudaError_t info_before_err =
+        cudaMemGetInfo(&free_before, &total_before);
+    if (info_before_err != cudaSuccess) {
+        throw std::runtime_error(
+            cuda_error_message("cudaMemGetInfo before cudaMalloc failed",
+                               info_before_err));
+    }
+
+    std::fprintf(
+        stderr,
+        "[CUDA-ALLOC-DIAG] kind=DeviceBuffer phase=before "
+        "request_bytes=%zu request_mib=%.4f free_bytes=%zu free_mib=%.4f "
+        "total_bytes=%zu\n",
+        bytes,
+        static_cast<double>(bytes) / (1024.0 * 1024.0),
+        free_before,
+        static_cast<double>(free_before) / (1024.0 * 1024.0),
+        total_before);
+
     void* ptr             = nullptr;
     const cudaError_t err = cudaMalloc(&ptr, bytes);
-    if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaMalloc failed", err));
+
+    std::size_t free_after = 0;
+    std::size_t total_after = 0;
+    const cudaError_t info_err =
+        cudaMemGetInfo(&free_after, &total_after);
+
+    if (info_err == cudaSuccess) {
+        std::fprintf(
+            stderr,
+            "[CUDA-ALLOC-DIAG] kind=DeviceBuffer phase=after "
+            "request_bytes=%zu request_mib=%.4f free_bytes=%zu free_mib=%.4f "
+            "delta_free_bytes=%lld result=%s\n",
+            bytes,
+            static_cast<double>(bytes) / (1024.0 * 1024.0),
+            free_after,
+            static_cast<double>(free_after) / (1024.0 * 1024.0),
+            static_cast<long long>(free_before) -
+                static_cast<long long>(free_after),
+            cudaGetErrorName(err));
     }
+
+    if (err != cudaSuccess) {
+        std::fprintf(
+            stderr,
+            "[CUDA-ALLOC-DIAG] kind=DeviceBuffer phase=FAIL "
+            "request_bytes=%zu free_before_bytes=%zu deficit_bytes=%lld "
+            "deficit_mib=%.4f error=%s\n",
+            bytes,
+            free_before,
+            static_cast<long long>(bytes) -
+                static_cast<long long>(free_before),
+            static_cast<double>(
+                static_cast<long long>(bytes) -
+                static_cast<long long>(free_before)) /
+                (1024.0 * 1024.0),
+            cudaGetErrorName(err));
+
+        throw std::runtime_error(
+            cuda_error_message("cudaMalloc failed", err));
+    }
+
     p = ptr;
 }
 
@@ -136,10 +195,70 @@ DeviceArena::DeviceArena(std::size_t capacity_bytes) {
         throw std::invalid_argument("DeviceArena capacity must be nonzero");
     }
 
+    std::size_t free_before = 0;
+    std::size_t total_before = 0;
+    const cudaError_t info_before_err =
+        cudaMemGetInfo(&free_before, &total_before);
+    if (info_before_err != cudaSuccess) {
+        throw std::runtime_error(
+            cuda_error_message("cudaMemGetInfo before cudaMalloc failed",
+                               info_before_err));
+    }
+
+    std::fprintf(
+        stderr,
+        "[CUDA-ALLOC-DIAG] kind=DeviceArena phase=before "
+        "request_bytes=%zu request_mib=%.4f free_bytes=%zu free_mib=%.4f "
+        "total_bytes=%zu\n",
+        capacity_bytes,
+        static_cast<double>(capacity_bytes) / (1024.0 * 1024.0),
+        free_before,
+        static_cast<double>(free_before) / (1024.0 * 1024.0),
+        total_before);
+
     void* ptr             = nullptr;
     const cudaError_t err = cudaMalloc(&ptr, capacity_bytes);
+
+    std::size_t free_after = 0;
+    std::size_t total_after = 0;
+    const cudaError_t info_err =
+        cudaMemGetInfo(&free_after, &total_after);
+
+    if (info_err == cudaSuccess) {
+        std::fprintf(
+            stderr,
+            "[CUDA-ALLOC-DIAG] kind=DeviceArena phase=after "
+            "request_bytes=%zu request_mib=%.4f free_bytes=%zu free_mib=%.4f "
+            "delta_free_bytes=%lld result=%s\n",
+            capacity_bytes,
+            static_cast<double>(capacity_bytes) /
+                (1024.0 * 1024.0),
+            free_after,
+            static_cast<double>(free_after) /
+                (1024.0 * 1024.0),
+            static_cast<long long>(free_before) -
+                static_cast<long long>(free_after),
+            cudaGetErrorName(err));
+    }
+
     if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaMalloc failed", err));
+        std::fprintf(
+            stderr,
+            "[CUDA-ALLOC-DIAG] kind=DeviceArena phase=FAIL "
+            "request_bytes=%zu free_before_bytes=%zu deficit_bytes=%lld "
+            "deficit_mib=%.4f error=%s\n",
+            capacity_bytes,
+            free_before,
+            static_cast<long long>(capacity_bytes) -
+                static_cast<long long>(free_before),
+            static_cast<double>(
+                static_cast<long long>(capacity_bytes) -
+                static_cast<long long>(free_before)) /
+                (1024.0 * 1024.0),
+            cudaGetErrorName(err));
+
+        throw std::runtime_error(
+            cuda_error_message("cudaMalloc failed", err));
     }
 
     base_ = ptr;

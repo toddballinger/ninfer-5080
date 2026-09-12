@@ -50,6 +50,44 @@ void launch_q4_gemv(const Tensor& x, const Weight& weight, Tensor& out, cudaStre
     CUDA_CHECK(cudaGetLastError());
 }
 
+
+template <class Geometry>
+void launch_q4_value_z_gemv(const Tensor& x, const Weight& weight, Tensor& value, Tensor& z,
+                            cudaStream_t stream) {
+    using Schedule = std::conditional_t<Geometry::kHidden == 4096,
+                                        Q4GemvR1W8DirectK64Schedule,
+                                        Q4GemvR1W8DirectSchedule>;
+
+    constexpr std::int32_t kRows      = Geometry::kValueZRows;
+    constexpr std::int32_t kSplitRow  = Geometry::kValueRows;
+    constexpr std::int32_t kHidden    = Geometry::kHidden;
+
+    const dim3 grid(
+        static_cast<unsigned>(div_up(kRows, Schedule::kRowsPerCta)),
+        1u,
+        1u);
+
+    constexpr dim3 block(
+        static_cast<unsigned>(Schedule::kThreads),
+        1u,
+        1u);
+
+    q4_rowsplit_gemv_kernel<
+        Schedule,
+        true,
+        kSplitRow
+    ><<<grid, block, 0, stream>>>(
+        static_cast<const __nv_bfloat16*>(x.data),
+        static_cast<const std::uint8_t*>(weight.qdata),
+        static_cast<const std::uint8_t*>(weight.scales),
+        static_cast<__nv_bfloat16*>(value.data),
+        static_cast<__nv_bfloat16*>(z.data),
+        kRows,
+        kHidden);
+
+    CUDA_CHECK(cudaGetLastError());
+}
+
 template <class Geometry, class Schedule, bool Full>
 void launch_q4_simt(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
     constexpr std::int32_t kQkRows = Geometry::kQkRows;
@@ -63,6 +101,76 @@ void launch_q4_simt(const Tensor& x, const Weight& weight, Tensor& out, cudaStre
         static_cast<const std::uint8_t*>(weight.scales), static_cast<__nv_bfloat16*>(out.data),
         nullptr, out_ld, 0, kQkRows, kHidden, cols, weight.padded_shape[1]);
     CUDA_CHECK(cudaGetLastError());
+}
+
+
+template <class Geometry, class Schedule, bool Full>
+void launch_q4_value_z_simt(const Tensor& x, const Weight& weight,
+                            Tensor& value, Tensor& z, cudaStream_t stream) {
+    constexpr std::int32_t kRows      = Geometry::kValueZRows;
+    constexpr std::int32_t kSplitRow  = Geometry::kValueRows;
+    constexpr std::int32_t kHidden    = Geometry::kHidden;
+
+    const std::int32_t cols = x.ne[1];
+
+    const std::int32_t value_ld =
+        static_cast<std::int32_t>(
+            value.nb[1] / sizeof(__nv_bfloat16));
+
+    const std::int32_t z_ld =
+        static_cast<std::int32_t>(
+            z.nb[1] / sizeof(__nv_bfloat16));
+
+    const dim3 grid(
+        static_cast<unsigned>(
+            div_up(kRows, Schedule::kRowsPerCta)),
+        static_cast<unsigned>(
+            div_up(cols, Schedule::kColsPerTile)),
+        1u);
+
+    q4_rowsplit_gemm_simt_kernel<
+        Schedule,
+        Full,
+        true,
+        kSplitRow
+    ><<<grid, Schedule::kThreads, 0, stream>>>(
+        static_cast<const __nv_bfloat16*>(x.data),
+        static_cast<const std::uint8_t*>(weight.qdata),
+        static_cast<const std::uint8_t*>(weight.scales),
+        static_cast<__nv_bfloat16*>(value.data),
+        static_cast<__nv_bfloat16*>(z.data),
+        value_ld,
+        z_ld,
+        kRows,
+        kHidden,
+        cols,
+        weight.padded_shape[1]);
+
+    CUDA_CHECK(cudaGetLastError());
+}
+
+template <class Geometry, class Schedule>
+void launch_q4_value_z_simt_route(const Tensor& x, const Weight& weight,
+                                  Tensor& value, Tensor& z,
+                                  cudaStream_t stream) {
+    constexpr std::int32_t kRows   = Geometry::kValueZRows;
+    constexpr std::int32_t kHidden = Geometry::kHidden;
+
+    const bool full =
+        (kRows % Schedule::kRowsPerCta) == 0 &&
+        ((kHidden / Q4RowSplitStorage::kGroupK) %
+             Schedule::kGroupsPerStage) == 0 &&
+        (x.ne[1] % Schedule::kColsPerTile) == 0;
+
+    if (full) {
+        launch_q4_value_z_simt<
+            Geometry, Schedule, true>(
+            x, weight, value, z, stream);
+    } else {
+        launch_q4_value_z_simt<
+            Geometry, Schedule, false>(
+            x, weight, value, z, stream);
+    }
 }
 
 template <class Geometry, class Schedule>
@@ -94,6 +202,37 @@ void launch_q4(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t 
         return;
     }
     throw std::invalid_argument("Q4/Q5 GDN independent launch requires T in [1,16]");
+}
+
+
+template <class Geometry>
+void launch_q4_value_z(const Tensor& x, const Weight& weight,
+                       Tensor& value, Tensor& z,
+                       cudaStream_t stream) {
+    if (x.ne[1] == 1) {
+        launch_q4_value_z_gemv<Geometry>(
+            x, weight, value, z, stream);
+        return;
+    }
+
+    if (x.ne[1] <= 4) {
+        launch_q4_value_z_simt_route<
+            Geometry,
+            Q4GdnSimtR8C4Schedule>(
+            x, weight, value, z, stream);
+        return;
+    }
+
+    if (x.ne[1] <= 16) {
+        launch_q4_value_z_simt_route<
+            Geometry,
+            Q4GdnSimtR8C8Schedule>(
+            x, weight, value, z, stream);
+        return;
+    }
+
+    throw std::invalid_argument(
+        "Q4 GDN value/z independent launch requires T in [1,16]");
 }
 
 template <class Geometry>
@@ -240,12 +379,31 @@ void launch_t4_pdl(const Tensor& x, const Weight& qk_weight, const Weight& value
 template <class Geometry>
 void launch_geometry(const Tensor& x, const Weight& qk_weight, const Weight& value_z_weight,
                      Tensor& qk, Tensor& value, Tensor& z, cudaStream_t stream) {
-    if (x.ne[1] == 4) {
-        launch_t4_pdl<Geometry>(x, qk_weight, value_z_weight, qk, value, z, stream);
+    if (value_z_weight.qtype == QType::Q5G64_F16S) {
+        if (x.ne[1] == 4) {
+            launch_t4_pdl<Geometry>(
+                x, qk_weight, value_z_weight,
+                qk, value, z, stream);
+            return;
+        }
+
+        launch_q4<Geometry>(
+            x, qk_weight, qk, stream);
+        launch_q5<Geometry>(
+            x, value_z_weight, value, z, stream);
         return;
     }
-    launch_q4<Geometry>(x, qk_weight, qk, stream);
-    launch_q5<Geometry>(x, value_z_weight, value, z, stream);
+
+    if (value_z_weight.qtype == QType::Q4G64_F16S) {
+        launch_q4<Geometry>(
+            x, qk_weight, qk, stream);
+        launch_q4_value_z<Geometry>(
+            x, value_z_weight, value, z, stream);
+        return;
+    }
+
+    throw std::invalid_argument(
+        "GDN independent value/z weight must be Q4 or Q5");
 }
 
 } // namespace

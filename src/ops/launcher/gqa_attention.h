@@ -72,6 +72,8 @@ void gqa_attention_cached_small_t_batch_launch(
     Tensor& partial_m, Tensor& partial_l, Tensor& out,
     cudaStream_t stream);
 
+void gqa_q4_prefill_prewarm();
+
 void gqa_attention_prompt_launch(const Tensor& q, const Tensor& k, const Tensor& v,
                                  const Tensor& positions, const Tensor& valid_columns,
                                  const Tensor& table_rows, float scale, PagedKVBatchLayerView cache,

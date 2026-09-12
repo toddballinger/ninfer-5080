@@ -55,6 +55,10 @@ ObjectHandle Binder::require_tensor(std::string_view name, NumericFormat format,
     return handle;
 }
 
+const ObjectDescriptor* Binder::find(std::string_view name) const noexcept {
+    return reader_.find(name);
+}
+
 ObjectHandle Binder::require_resource(std::string_view name, ResourceEncoding encoding) {
     const ObjectHandle handle = find_unconsumed(name);
     const auto* resource      = std::get_if<ResourceDescriptor>(&descriptor(handle));
