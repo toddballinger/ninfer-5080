@@ -95,7 +95,7 @@ int run_q4_q5() {
         quantized_weight::make_patterned_weight(QType::Q4G64_F16S, kParent, kHidden, 109U));
 
     int failures = 0;
-    for (const std::int32_t tokens : {1, 2, 16, 17, 21, 48}) {
+    for (const std::int32_t tokens : {1, 2, 16, 17, 21, 48, 129, 321, 621, 896}) {
         failures += run_q4_q5_case(query_key, gate_value, tokens);
         failures += run_q4_q5_case(query_key, gate_value_q4, tokens);
     }

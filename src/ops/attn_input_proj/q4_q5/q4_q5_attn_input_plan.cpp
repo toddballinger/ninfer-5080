@@ -158,19 +158,32 @@ void q4_q5_attn_input_execute_plan(const Q4Q5AttnInputPlan& plan, const Tensor& 
         throw std::invalid_argument("Q4/Q5 attention input: plan does not match exact problem");
     }
 
-    // Q4/Q4 attention-input uses the native Q4 split-output
-    // GEMV/SIMT implementation for every T. The grouped pair MMA
-    // kernels are retained exclusively for the qualified Q4/Q5 pair.
+    // Q4/Q4 must not use the historically incorrect grouped-pair MMA.
+    // Keep the proven GEMV/SIMT split-output path for T<=16, but for
+    // larger T run four independent projections through the already
+    // qualified Q4 RowSplit MMA kernel.
     if (gate_value_weight.qtype == QType::Q4G64_F16S) {
-        q4_q5_attn_input_small_t_launch(
-            x,
-            query_key_weight,
-            gate_value_weight,
-            q,
-            gate,
-            k,
-            v,
-            stream);
+        if (x.ne[1] <= 16) {
+            q4_q5_attn_input_small_t_launch(
+                x,
+                query_key_weight,
+                gate_value_weight,
+                q,
+                gate,
+                k,
+                v,
+                stream);
+        } else {
+            q4_q4_attn_input_independent_mma_launch(
+                x,
+                query_key_weight,
+                gate_value_weight,
+                q,
+                gate,
+                k,
+                v,
+                stream);
+        }
         return;
     }
 
