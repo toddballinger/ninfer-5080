@@ -76,10 +76,22 @@ void launch_schedule(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t
     const dim3 grid(static_cast<unsigned>(div_up(rows, Schedule::kBlockRows)),
                     static_cast<unsigned>(div_up(cols, Schedule::kBlockCols)), 1u);
 
+    if (out.nb[1] % static_cast<std::int64_t>(sizeof(__nv_bfloat16)) != 0) {
+        throw std::invalid_argument("Q4 MMA output column stride is not BF16-aligned");
+    }
+
+    const std::int64_t out_col_stride =
+        out.nb[1] / static_cast<std::int64_t>(sizeof(__nv_bfloat16));
+
+    if (out_col_stride < rows) {
+        throw std::invalid_argument(
+            "Q4 MMA output column stride is smaller than logical rows");
+    }
+
     q4_rowsplit_gemm_mma_kernel<Schedule, Full><<<grid, Schedule::kThreads, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(x.data), static_cast<const std::uint8_t*>(w.qdata),
         static_cast<const std::uint8_t*>(w.scales), static_cast<__nv_bfloat16*>(out.data), rows, k,
-        cols, padded_k);
+        cols, padded_k, out_col_stride);
     CUDA_CHECK(cudaGetLastError());
 }
 
