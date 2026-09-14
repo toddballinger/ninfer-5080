@@ -163,7 +163,7 @@ void q4_q5_attn_input_execute_plan(const Q4Q5AttnInputPlan& plan, const Tensor& 
     // larger T run four independent projections through the already
     // qualified Q4 RowSplit MMA kernel.
     if (gate_value_weight.qtype == QType::Q4G64_F16S) {
-        if (x.ne[1] <= 16) {
+        if (x.ne[1] <= 256) {
             q4_q5_attn_input_small_t_launch(
                 x,
                 query_key_weight,
