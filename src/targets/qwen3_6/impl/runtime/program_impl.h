@@ -176,6 +176,37 @@ void instantiate_graph_family(DecodeGraphFamily& family, const char* label, Devi
     }
 }
 
+constexpr std::size_t kRuntimeArenaAlignment = 256;
+
+std::size_t runtime_workspace_offset_bytes(std::size_t persistent_bytes) {
+    constexpr std::size_t mask = kRuntimeArenaAlignment - 1;
+
+    if (persistent_bytes >
+        std::numeric_limits<std::size_t>::max() - mask) {
+        throw std::overflow_error(
+            "runtime persistent arena alignment overflow");
+    }
+
+    return (persistent_bytes + mask) & ~mask;
+}
+
+std::size_t runtime_backing_capacity_bytes(
+    std::size_t persistent_bytes,
+    std::size_t workspace_bytes) {
+
+    const std::size_t workspace_offset =
+        runtime_workspace_offset_bytes(persistent_bytes);
+
+    if (workspace_bytes >
+        std::numeric_limits<std::size_t>::max() -
+            workspace_offset) {
+        throw std::overflow_error(
+            "combined runtime backing allocation overflow");
+    }
+
+    return workspace_offset + workspace_bytes;
+}
+
 } // namespace
 
 ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const SequencePlanImpl& plan,
@@ -187,8 +218,19 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
       proposal_head(plan.proposal_head), vision_enabled(plan.features.vision),
       use_cuda_graph(plan.use_cuda_graph), kv_payload_bytes(plan.persistent.kv_payload_bytes),
       graph_allowance_bytes(plan.graph_allowance_bytes), workspace_plan(plan.workspace),
-      persistent(plan.persistent.bytes), workspace_storage(plan.workspace.capacity),
-      work(DeviceSpan{workspace_storage.base(), workspace_storage.capacity()}),
+      runtime_backing(
+          runtime_backing_capacity_bytes(plan.persistent.bytes,
+                                         plan.workspace.capacity)),
+      persistent(DeviceSpan{
+          runtime_backing.p,
+          plan.persistent.bytes}),
+      workspace_storage(DeviceSpan{
+          static_cast<std::uint8_t*>(runtime_backing.p) +
+              runtime_workspace_offset_bytes(plan.persistent.bytes),
+          plan.workspace.capacity}),
+      work(DeviceSpan{
+          workspace_storage.base(),
+          workspace_storage.capacity()}),
       round_host(sizeof(TokenId)),
       ordinary_host(
           plan.speculative_backend == SpeculativeBackend::None
@@ -1917,8 +1959,7 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
             if (staged.cursor != staged.prompt_tokens) {
                 throw std::logic_error("staged prefill sampled before the prompt frontier");
             }
-            copy_tail(sequence, prefill_hidden.slice(
-                                    1, static_cast<std::int32_t>(result.processed_tokens) - 1, 1));
+            copy_tail(sequence, prefill_hidden);
         } else {
             mark_workspace_usage(workspace_plan.ordinary_round);
             if (!sequence.tail_hidden_valid) {

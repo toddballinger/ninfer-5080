@@ -3,6 +3,7 @@
 #include "core/device.h"
 #include "ops/common/math.h"
 #include "ops/linear/q4/q4_rowsplit_gemm_simt.cuh"
+#include "ops/linear/q4/q4_launch.h"
 #include "ops/linear/q4/q4_rowsplit_gemv.cuh"
 #include "ops/linear/q5/q5_rowsplit_gemm_simt.cuh"
 #include "ops/linear/q5/q5_rowsplit_gemv.cuh"
@@ -110,7 +111,17 @@ void launch_q4(const Tensor& x, const Weight& weight, Tensor& q, Tensor& key, cu
         launch_q4_simt_route<Geometry, Q4AttnSimtR8C8Schedule>(x, weight, q, key, stream);
         return;
     default:
-        throw std::invalid_argument("attention Q4 split-output requires T in [1,16]");
+        // Correctness-first Q4/Q4 fallback for wider token batches.
+        //
+        // The grouped attention pair kernels are qualified for the
+        // production Q4/Q5 pair, but are not safe when gate/value is
+        // also Q4. The generic Q4 RowSplit SIMT kernel already supports
+        // split output at the 6144-row seam and arbitrary positive T.
+        launch_q4_simt_route<
+            Geometry,
+            Q4AttnSimtR8C8Schedule>(
+                x, weight, q, key, stream);
+        return;
     }
 }
 
@@ -216,14 +227,111 @@ void launch_q5(const Tensor& x, const Weight& weight, Tensor& gate, Tensor& valu
     throw std::invalid_argument("attention Q5 split-output requires T in [1,16]");
 }
 
+
+Weight q4_rowsplit_row_view(const Weight& parent, std::int32_t row_begin,
+                            std::int32_t row_count) {
+    if (parent.qtype != QType::Q4G64_F16S ||
+        parent.layout != QuantLayout::RowSplit ||
+        parent.group != 64 ||
+        row_begin < 0 ||
+        row_count <= 0 ||
+        row_begin + row_count > parent.n) {
+        throw std::invalid_argument(
+            "Q4 attention independent MMA row view is invalid");
+    }
+
+    const std::int64_t groups =
+        static_cast<std::int64_t>(parent.padded_shape[1]) / parent.group;
+
+    Weight view = parent;
+
+    view.qdata =
+        static_cast<const std::uint8_t*>(parent.qdata) +
+        static_cast<std::int64_t>(row_begin) * groups * 32;
+
+    view.scales =
+        static_cast<const std::uint8_t*>(parent.scales) +
+        static_cast<std::int64_t>(row_begin) * groups * 2;
+
+    view.qhigh = nullptr;
+    view.high_plane_bytes = 0;
+
+    view.n = row_count;
+    view.shape[0] = row_count;
+    view.padded_shape[0] = row_count;
+
+    return view;
+}
+
 template <class Geometry>
 void launch_geometry(const Tensor& x, const Weight& query_key_weight, const Weight& gate_value_weight,
                      Tensor& q, Tensor& gate, Tensor& k, Tensor& v, cudaStream_t stream) {
     launch_q4<Geometry>(x, query_key_weight, q, k, stream);
-    launch_q5<Geometry>(x, gate_value_weight, gate, v, stream);
+
+    if (gate_value_weight.qtype == QType::Q4G64_F16S) {
+        launch_q4<Geometry>(
+            x, gate_value_weight, gate, v, stream);
+        return;
+    }
+
+    if (gate_value_weight.qtype == QType::Q5G64_F16S) {
+        launch_q5<Geometry>(
+            x, gate_value_weight, gate, v, stream);
+        return;
+    }
+
+    throw std::invalid_argument(
+        "attention gate/value weight must be "
+        "Q4G64_F16S or Q5G64_F16S");
 }
 
 } // namespace
+
+
+void q4_q4_attn_input_independent_mma_launch(
+    const Tensor& x, const Weight& query_key_weight,
+    const Weight& gate_value_weight, Tensor& q, Tensor& gate,
+    Tensor& k, Tensor& v, cudaStream_t stream) {
+
+    if (x.ne[1] <= 16) {
+        throw std::invalid_argument(
+            "Q4 attention independent MMA requires T > 16");
+    }
+
+    if (query_key_weight.qtype != QType::Q4G64_F16S ||
+        gate_value_weight.qtype != QType::Q4G64_F16S) {
+        throw std::invalid_argument(
+            "Q4 attention independent MMA requires Q4/Q4 weights");
+    }
+
+    if (query_key_weight.n != q.ne[0] + k.ne[0] ||
+        gate_value_weight.n != gate.ne[0] + v.ne[0] ||
+        q.ne[1] != x.ne[1] ||
+        gate.ne[1] != x.ne[1] ||
+        k.ne[1] != x.ne[1] ||
+        v.ne[1] != x.ne[1]) {
+        throw std::invalid_argument(
+            "Q4 attention independent MMA geometry mismatch");
+    }
+
+    const Weight q_weight =
+        q4_rowsplit_row_view(query_key_weight, 0, q.ne[0]);
+    const Weight k_weight =
+        q4_rowsplit_row_view(query_key_weight, q.ne[0], k.ne[0]);
+
+    const Weight gate_weight =
+        q4_rowsplit_row_view(gate_value_weight, 0, gate.ne[0]);
+    const Weight value_weight =
+        q4_rowsplit_row_view(gate_value_weight, gate.ne[0], v.ne[0]);
+
+    // Use the already-qualified generic Q4 RowSplit tensor-core kernel.
+    // R64/C128 is the production large-T route selected by generic Q4
+    // dispatch for the corresponding long-prefill geometries.
+    launch_q4_mma_r64_c128(x, q_weight, q, stream);
+    launch_q4_mma_r64_c128(x, k_weight, k, stream);
+    launch_q4_mma_r64_c128(x, gate_weight, gate, stream);
+    launch_q4_mma_r64_c128(x, value_weight, v, stream);
+}
 
 void q4_q5_attn_input_small_t_launch(const Tensor& x, const Weight& query_key_weight,
                                      const Weight& gate_value_weight, Tensor& q, Tensor& gate,

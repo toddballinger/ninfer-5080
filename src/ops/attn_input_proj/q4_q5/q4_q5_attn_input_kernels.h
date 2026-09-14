@@ -17,6 +17,13 @@ void q4_q5_attn_input_small_t_launch(const Tensor& x, const Weight& query_key_we
                                      const Weight& gate_value_weight, Tensor& q, Tensor& gate,
                                      Tensor& k, Tensor& v, cudaStream_t stream);
 
+// Q4/Q4 large-T path: run four independent, proven Q4 RowSplit MMA
+// projections rather than the historically incorrect grouped Q4/Q4 pair.
+void q4_q4_attn_input_independent_mma_launch(
+    const Tensor& x, const Weight& query_key_weight,
+    const Weight& gate_value_weight, Tensor& q, Tensor& gate,
+    Tensor& k, Tensor& v, cudaStream_t stream);
+
 void q4_q5_attn_input_small_t_prewarm();
 
 void q4_q5_attn_input_grouped_mma_r16_c64_s3_launch(const Tensor& x, const Weight& query_key_weight,

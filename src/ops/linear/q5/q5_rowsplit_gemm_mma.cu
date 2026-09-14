@@ -59,6 +59,39 @@ void launch_route(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t st
 
 } // namespace
 
+
+void q5_rowsplit_mma_prewarm() {
+    cudaFuncAttributes attr{};
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q5_rowsplit_gemm_mma_kernel<
+            MmaR64C64Schedule,
+            true,
+            Q5MmaEpilogue::Store>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q5_rowsplit_gemm_mma_kernel<
+            MmaR64C64Schedule,
+            false,
+            Q5MmaEpilogue::Store>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q5_rowsplit_gemm_mma_kernel<
+            MmaR64C128Schedule,
+            true,
+            Q5MmaEpilogue::Store>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q5_rowsplit_gemm_mma_kernel<
+            MmaR64C128Schedule,
+            false,
+            Q5MmaEpilogue::Store>));
+}
+
 void launch_q5_mma_r64_c64(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream) {
     launch_route<MmaR64C64Schedule>(x, w, out, stream);
 }

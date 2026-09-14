@@ -54,6 +54,8 @@ constexpr std::int32_t int8_proj_token_tile(std::int32_t cols) noexcept {
 
 // Quantizes `x` once and runs every job against it, in bounded token tiles.
 // `x` is BF16 [k, cols]; each job's output is BF16 [*, cols].
+void int8_proj_prewarm();
+
 void int8_proj_launch(const Tensor& x, const Int8ProjJob* jobs, int job_count,
                       const Int8ProjWorkspace& scratch, cudaStream_t stream);
 

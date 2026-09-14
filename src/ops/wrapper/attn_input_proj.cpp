@@ -30,6 +30,33 @@ void require_matrix(const Tensor& tensor, std::int32_t rows, std::int32_t cols, 
     }
 }
 
+void require_row_contiguous_output(
+    const Tensor& tensor,
+    std::int32_t rows,
+    std::int32_t cols,
+    const char* label) {
+
+    constexpr std::int64_t kElementBytes =
+        static_cast<std::int64_t>(sizeof(std::uint16_t));
+
+    const std::int64_t minimum_column_stride =
+        static_cast<std::int64_t>(rows) * kElementBytes;
+
+    if (tensor.dtype != DType::BF16 ||
+        tensor.ne[0] != rows ||
+        tensor.ne[1] != cols ||
+        tensor.ne[2] != 1 ||
+        tensor.ne[3] != 1 ||
+        tensor.nb[0] != kElementBytes ||
+        tensor.nb[1] < minimum_column_stride ||
+        tensor.nb[1] % kElementBytes != 0 ||
+        !aligned_to(tensor.data, 16)) {
+
+        throw std::invalid_argument(
+            std::string("attn_input_proj: invalid ") + label);
+    }
+}
+
 void require_rowsplit(const Weight& weight, QType qtype, std::int32_t rows, std::int32_t k,
                       const char* label) {
     const bool q4_planes =
@@ -47,9 +74,40 @@ void require_rowsplit(const Weight& weight, QType qtype, std::int32_t rows, std:
     }
 }
 
+void require_rowsplit_q4_or_q5(
+    const Weight& weight,
+    std::int32_t rows,
+    std::int32_t columns,
+    const char* label) {
+
+    if (weight.qtype == QType::Q4G64_F16S) {
+        require_rowsplit(
+            weight,
+            QType::Q4G64_F16S,
+            rows,
+            columns,
+            label);
+        return;
+    }
+
+    if (weight.qtype == QType::Q5G64_F16S) {
+        require_rowsplit(
+            weight,
+            QType::Q5G64_F16S,
+            rows,
+            columns,
+            label);
+        return;
+    }
+
+    throw std::invalid_argument(
+        std::string("attn_input_proj: ") +
+        std::string(label) +
+        " must be Q4G64_F16S or Q5G64_F16S");
+}
+
 void require_w8_rowsplit(const Weight& weight, std::int32_t rows, std::int32_t hidden,
-                         const char* label) {
-    if (weight.qtype != QType::W8G32_F16S || weight.layout != QuantLayout::RowSplit ||
+                         const char* label) {    if (weight.qtype != QType::W8G32_F16S || weight.layout != QuantLayout::RowSplit ||
         weight.scale_dtype != DType::FP16 || weight.group_size != 32 || weight.group != 32 ||
         weight.ndim != 2 || weight.n != rows || weight.k != hidden || weight.shape[0] != rows ||
         weight.shape[1] != hidden || weight.padded_shape[0] != rows ||
@@ -240,14 +298,14 @@ void dispatch_split_parent(const Tensor& x, const Weight& query_key_weight,
         constexpr std::int32_t kQRows  = 6144;
         constexpr std::int32_t kKvRows = 1024;
         require_matrix(x, 5120, cols, "x");
-        require_matrix(q, kQRows, cols, "q");
-        require_matrix(gate, kQRows, cols, "gate");
-        require_matrix(k, kKvRows, cols, "k");
-        require_matrix(v, kKvRows, cols, "v");
+        require_row_contiguous_output(q, kQRows, cols, "q");
+        require_row_contiguous_output(gate, kQRows, cols, "gate");
+        require_row_contiguous_output(k, kKvRows, cols, "k");
+        require_row_contiguous_output(v, kKvRows, cols, "v");
         require_rowsplit(query_key_weight, QType::Q4G64_F16S, kQRows + kKvRows, 5120,
                          "query/key weight");
-        require_rowsplit(gate_value_weight, QType::Q5G64_F16S, kQRows + kKvRows, 5120,
-                         "gate/value weight");
+        require_rowsplit_q4_or_q5(
+            gate_value_weight, kQRows + kKvRows, 5120, "gate/value weight");
         break;
     }
     case 4096: {
@@ -257,14 +315,14 @@ void dispatch_split_parent(const Tensor& x, const Weight& query_key_weight,
         constexpr std::int32_t kQRows  = 4096;
         constexpr std::int32_t kKvRows = 1024;
         require_matrix(x, 4096, cols, "x");
-        require_matrix(q, kQRows, cols, "q");
-        require_matrix(gate, kQRows, cols, "gate");
-        require_matrix(k, kKvRows, cols, "k");
-        require_matrix(v, kKvRows, cols, "v");
+        require_row_contiguous_output(q, kQRows, cols, "q");
+        require_row_contiguous_output(gate, kQRows, cols, "gate");
+        require_row_contiguous_output(k, kKvRows, cols, "k");
+        require_row_contiguous_output(v, kKvRows, cols, "v");
         require_rowsplit(query_key_weight, QType::Q4G64_F16S, kQRows + kKvRows, 4096,
                          "query/key weight");
-        require_rowsplit(gate_value_weight, QType::Q5G64_F16S, kQRows + kKvRows, 4096,
-                         "gate/value weight");
+        require_rowsplit_q4_or_q5(
+            gate_value_weight, kQRows + kKvRows, 4096, "gate/value weight");
         break;
     }
     default:

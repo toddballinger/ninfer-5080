@@ -276,8 +276,10 @@ PersistentLayout persistent_layout(const SequencePlanImpl& plan) {
                                          .backend        = plan.speculative_backend});
     persistent_diag("after round begin");
 
+    // Only the final normalized prefill hidden column must survive the
+    // workspace lifetime. Full-chunk normalized hidden now lives in WorkspaceArena.
     out.prefill_hidden = add_tensor(
-        builder, DType::BF16, {TextConfig::hidden, effective_prefill_chunk}, "step prefill hidden");
+        builder, DType::BF16, {TextConfig::hidden, 1}, "step prefill hidden tail");
     persistent_diag("after prefill hidden");
 
     qwen3_6::complete_round_state_layout(builder, out.round);
@@ -520,6 +522,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
         "[PREFILL-STAGE] after postmixer   %12zu B  %8.4f MiB\n",
         finish(text_prefill), finish(text_prefill) / 1048576.0);
 
+    // Normalized target hidden remains live through sampling/MTP but is
+    // workspace-backed. GDN remains the dominant workspace peak.
+    matrix(text_prefill, DType::BF16, TextConfig::hidden, chunk);
+
     scratch(text_prefill,
             ops::sampling_workspace_capacity_bytes(TextConfig::token_domain, 1, 1));
     std::fprintf(stderr,
@@ -544,6 +550,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
         text_common_root(mtp_prefill, chunk);
         target_body(mtp_prefill, 1, chunk, qwen3_6::TextPhase::Prefill, GdnWorkspacePath::Prefill,
                     1, 1, chunk, text_envelope);
+
+        // Full normalized target hidden stays live while MTP consumes it.
+        matrix(mtp_prefill, DType::BF16, TextConfig::hidden, chunk);
+
         matrix(mtp_prefill, DType::I32, 1, chunk);
         if (plan.features.vision) {
             matrix(mtp_prefill, DType::BF16, TextConfig::hidden, chunk);

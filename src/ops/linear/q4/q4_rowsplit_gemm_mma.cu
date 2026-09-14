@@ -76,10 +76,22 @@ void launch_schedule(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t
     const dim3 grid(static_cast<unsigned>(div_up(rows, Schedule::kBlockRows)),
                     static_cast<unsigned>(div_up(cols, Schedule::kBlockCols)), 1u);
 
+    if (out.nb[1] % static_cast<std::int64_t>(sizeof(__nv_bfloat16)) != 0) {
+        throw std::invalid_argument("Q4 MMA output column stride is not BF16-aligned");
+    }
+
+    const std::int64_t out_col_stride =
+        out.nb[1] / static_cast<std::int64_t>(sizeof(__nv_bfloat16));
+
+    if (out_col_stride < rows) {
+        throw std::invalid_argument(
+            "Q4 MMA output column stride is smaller than logical rows");
+    }
+
     q4_rowsplit_gemm_mma_kernel<Schedule, Full><<<grid, Schedule::kThreads, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(x.data), static_cast<const std::uint8_t*>(w.qdata),
         static_cast<const std::uint8_t*>(w.scales), static_cast<__nv_bfloat16*>(out.data), rows, k,
-        cols, padded_k);
+        cols, padded_k, out_col_stride);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -100,6 +112,179 @@ void launch_route(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t st
 }
 
 } // namespace
+
+void q4_rowsplit_mma_prewarm() {
+    cudaFuncAttributes attr{};
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C32Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C32Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C48Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C48Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C56Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C56Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C64Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C64Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C64EndpointSchedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C64EndpointSchedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C72Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C72Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C80Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C80Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C96Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C96Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C104Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C104Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C112PartialSchedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C112PartialSchedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C112Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C112Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C120PartialSchedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C120PartialSchedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C120Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C120Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C128Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR64C128Schedule,
+            false>));
+
+}
 
 void launch_q4_mma_r64_c32(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream) {
     launch_route<Q4MmaR64C32Schedule>(x, w, out, stream);

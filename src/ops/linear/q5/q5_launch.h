@@ -15,6 +15,8 @@ void launch_q5_simt_split2_exact(const Tensor& x, const Weight& w, Tensor& out,
                                  cudaStream_t stream);
 void launch_q5_simt_split4_exact(const Tensor& x, const Weight& w, Tensor& out,
                                  cudaStream_t stream);
+void q5_rowsplit_mma_prewarm();
+
 void launch_q5_mma_r64_c64(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream);
 void launch_q5_mma_r64_c128(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream);
 

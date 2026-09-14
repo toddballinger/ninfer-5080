@@ -1,4 +1,7 @@
 #include "ninfer/ops/linear_w8_k_slice.h"
+#include <cstdio>
+#include <cstdlib>
+
 #include "targets/qwen3_6/impl/runtime/instance.h"
 #include "targets/qwen3_6/impl/runtime/text_context.h"
 #include "targets/qwen3_6/impl/runtime/workspace_recipe.h"

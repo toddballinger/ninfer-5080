@@ -78,10 +78,12 @@ std::size_t gdn_snapshot_workspace_bytes(const Tensor& hidden,
     const std::int32_t batch = hidden.ne[2];
     const std::int32_t width = hidden.ne[1];
     if (std::holds_alternative<SplitGdnInputProjectionPayload>(weights.input_projection)) {
+        const auto& split =
+            std::get<SplitGdnInputProjectionPayload>(weights.input_projection);
         return std::max(kMinimumLeafWorkspaceBytes,
                         ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-                            TextConfig::key_dim, TextConfig::key_dim, TextConfig::value_dim, batch,
-                            width, width));
+                            split.value_z.qtype, TextConfig::key_dim, TextConfig::key_dim,
+                            TextConfig::value_dim, batch, width, width));
     }
     const Weight& parent =
         std::get<FusedGdnInputProjectionPayload>(weights.input_projection).query_key_value_z;

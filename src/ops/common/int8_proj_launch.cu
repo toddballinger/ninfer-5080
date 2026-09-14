@@ -65,6 +65,77 @@ void launch_sized(const Int8ProjJob& job, const std::int8_t* xq, const float* xs
 
 } // namespace
 
+
+void int8_proj_prewarm() {
+    // Q4 wide.
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q4Wide,
+            true,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q4Wide::kSharedBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q4Wide,
+            false,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q4Wide::kSharedBytes));
+
+    // Q4 narrow.
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q4Narrow,
+            true,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q4Narrow::kSharedBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q4Narrow,
+            false,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q4Narrow::kSharedBytes));
+
+    // Q5 wide.
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q5Wide,
+            true,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q5Wide::kSharedBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q5Wide,
+            false,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q5Wide::kSharedBytes));
+
+    // Q5 narrow.
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q5Narrow,
+            true,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q5Narrow::kSharedBytes));
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        int8_rowsplit_gemm_kernel<
+            Q5Narrow,
+            false,
+            Int8GemmEpilogue::Store>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        Q5Narrow::kSharedBytes));
+}
+
 void int8_proj_launch(const Tensor& x, const Int8ProjJob* jobs, int job_count,
                       const Int8ProjWorkspace& scratch, cudaStream_t stream) {
     const std::int32_t k        = x.ne[0];

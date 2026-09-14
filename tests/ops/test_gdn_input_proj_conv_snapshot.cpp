@@ -458,7 +458,7 @@ int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& value_z_we
     Tensor v                          = value.tensor();
     Tensor z_output                   = z.tensor();
     const std::size_t workspace_bytes = ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-        kQueryRows, kKeyRows, kValueRows, 1, tokens, tokens);
+        value_z_weight.view().qtype, kQueryRows, kKeyRows, kValueRows, 1, tokens, tokens);
     WorkspaceArena workspace(std::max<std::size_t>(1, workspace_bytes));
 
     ops::gdn_input_proj_conv_snapshot(x, query_key.view(), value_z_weight.view(), conv, conv_state,

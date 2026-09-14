@@ -83,6 +83,37 @@ WeightPlan bind_weight(artifact::Binder& binder, std::string_view name, NumericF
                       .format = format};
 }
 
+WeightPlan bind_q4_or_q5_weight(artifact::Binder& binder, std::string_view name,
+                               std::initializer_list<std::uint64_t> shape) {
+    const artifact::ObjectDescriptor* object = binder.find(name);
+
+    if (object == nullptr) {
+        throw artifact::ArtifactError(
+            "required artifact object is missing: " + std::string(name));
+    }
+
+    const auto* tensor =
+        std::get_if<artifact::TensorDescriptor>(object);
+
+    if (tensor == nullptr) {
+        throw artifact::ArtifactError(
+            "required weight is not a tensor: " + std::string(name));
+    }
+
+    if (tensor->format != NumericFormat::Q4G64_F16S &&
+        tensor->format != NumericFormat::Q5G64_F16S) {
+        throw artifact::ArtifactError(
+            "GDN value/z must be Q4G64_F16S or Q5G64_F16S: " +
+            std::string(name));
+    }
+
+    return bind_weight(
+        binder,
+        name,
+        tensor->format,
+        shape);
+}
+
 WeightPlan bind_nvfp4_weight(artifact::Binder& binder, std::string_view name, std::int32_t rows,
                              std::int32_t columns, std::string_view input_divisor_name) {
     const std::array<std::uint64_t, 2> shape = {static_cast<std::uint64_t>(rows),
@@ -248,8 +279,8 @@ void bind_groupwise_text_layers(artifact::Binder& binder, BindingPlan& out,
             target.attention.projection = SplitAttentionProjectionPlan{
                 .query_key  = bind_weight(binder, prefix + "attention/query_key",
                                           NumericFormat::Q4G64_F16S, {7168, 5120}),
-                .gate_value = bind_weight(binder, prefix + "attention/gate_value",
-                                          NumericFormat::Q5G64_F16S, {7168, 5120}),
+                .gate_value = bind_q4_or_q5_weight(
+                    binder, prefix + "attention/gate_value", {7168, 5120}),
             };
             target.attention.query_norm = artifact::bind_device_tensor(
                 binder, prefix + "attention/query_norm", NumericFormat::BF16, {256});
@@ -274,8 +305,8 @@ void bind_groupwise_text_layers(artifact::Binder& binder, BindingPlan& out,
             target.gdn.input_projection = SplitGdnInputProjectionPlan{
                 .query_key = bind_weight(binder, prefix + "gdn/query_key",
                                          NumericFormat::Q4G64_F16S, {4096, 5120}),
-                .value_z   = bind_weight(binder, prefix + "gdn/value_z",
-                                         NumericFormat::Q5G64_F16S, {12288, 5120}),
+                .value_z   = bind_q4_or_q5_weight(
+                    binder, prefix + "gdn/value_z", {12288, 5120}),
             };
             target.gdn.norm = artifact::bind_device_tensor(binder, prefix + "gdn/norm",
                                                            NumericFormat::BF16, {128});

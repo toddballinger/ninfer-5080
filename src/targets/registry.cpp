@@ -8,7 +8,11 @@
 #include "ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_kernels.h"
 #include "ops/launcher/speculative_round.h"
 #include "ops/launcher/scalar.h"
+#include "ops/launcher/gqa_attention.h"
 #include "runtime/engine/kv_capacity.h"
+#include "ops/linear/q4/q4_launch.h"
+#include "ops/linear/q5/q5_launch.h"
+#include "ops/common/int8_proj_launch.h"
 
 #include <chrono>
 #include <cstdint>
@@ -147,6 +151,26 @@ ConstructedTarget construct_registered(const EngineOptions& options, DeviceConte
         ops::detail::scalar_prewarm();
         device.synchronize();
         mem_diag("after scalar");
+
+        ops::detail::q4_small_t_mma_prewarm();
+        device.synchronize();
+        mem_diag("after q4 small-t linear");
+
+        ops::detail::q5_rowsplit_mma_prewarm();
+        device.synchronize();
+        mem_diag("after q5 rowsplit mma");
+
+        ops::detail::gqa_q4_prefill_prewarm();
+        device.synchronize();
+        mem_diag("after gqa q4 prefill");
+
+        ops::detail::int8_proj_prewarm();
+        device.synchronize();
+        mem_diag("after int8 projection");
+
+        ops::detail::q4_rowsplit_mma_prewarm();
+        device.synchronize();
+        mem_diag("after q4 rowsplit mma");
     }
 
     runtime::KvCapacityResolution capacity_resolution =

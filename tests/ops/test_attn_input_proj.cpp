@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <string>
@@ -47,6 +48,140 @@ int verify_output(std::string_view label, const GuardedBf16Tensor& output,
     return failures;
 }
 
+
+std::vector<double> copy_bf16_tensor_view_values(
+    const Tensor& tensor) {
+
+    if (tensor.dtype != DType::BF16) {
+        throw std::invalid_argument(
+            "copy_bf16_tensor_view_values requires BF16");
+    }
+
+    if (tensor.ne[2] != 1 || tensor.ne[3] != 1) {
+        throw std::invalid_argument(
+            "copy_bf16_tensor_view_values requires matrix tensor");
+    }
+
+    if (tensor.nb[0] !=
+        static_cast<std::int64_t>(sizeof(std::uint16_t))) {
+        throw std::invalid_argument(
+            "copy_bf16_tensor_view_values requires contiguous dim0");
+    }
+
+    if (tensor.nb[1] %
+            static_cast<std::int64_t>(sizeof(std::uint16_t)) != 0) {
+        throw std::invalid_argument(
+            "copy_bf16_tensor_view_values invalid column stride");
+    }
+
+    const std::int32_t rows =
+        static_cast<std::int32_t>(tensor.ne[0]);
+
+    const std::int32_t tokens =
+        static_cast<std::int32_t>(tensor.ne[1]);
+
+    std::vector<std::uint16_t> bits(
+        static_cast<std::size_t>(rows) *
+        static_cast<std::size_t>(tokens));
+
+    const auto* base =
+        static_cast<const std::uint8_t*>(tensor.data);
+
+    for (std::int32_t token = 0; token < tokens; ++token) {
+
+        const auto* src =
+            base +
+            static_cast<std::int64_t>(token) *
+                tensor.nb[1];
+
+        auto* dst =
+            bits.data() +
+            static_cast<std::size_t>(token) *
+                static_cast<std::size_t>(rows);
+
+        cuda_check(
+            cudaMemcpy(
+                dst,
+                src,
+                static_cast<std::size_t>(rows) *
+                    sizeof(std::uint16_t),
+                cudaMemcpyDeviceToHost),
+            "copy strided attention output");
+    }
+
+    std::vector<double> values(bits.size());
+
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+
+        const std::uint32_t word =
+            static_cast<std::uint32_t>(bits[i]) << 16;
+
+        float f = 0.0F;
+        std::memcpy(&f, &word, sizeof(f));
+
+        values[i] = static_cast<double>(f);
+    }
+
+    return values;
+}
+
+
+int verify_output_strided_view(
+    std::string_view label,
+    const Tensor& output,
+    const quantized_weight::PackedWeight& weight,
+    std::int32_t weight_row_offset,
+    std::int32_t output_rows,
+    const std::vector<float>& activation,
+    std::int32_t hidden,
+    std::int32_t tokens) {
+
+    if (output.ne[0] != output_rows ||
+        output.ne[1] != tokens) {
+
+        std::cerr
+            << label
+            << ": unexpected shape "
+            << output.ne[0]
+            << "x"
+            << output.ne[1]
+            << "\n";
+
+        return 1;
+    }
+
+    constexpr std::int32_t kSampleCount = 7;
+
+    const std::vector<double> logical =
+        copy_bf16_tensor_view_values(output);
+
+    const std::vector<double> actual =
+        gather_rows(
+            logical,
+            output_rows,
+            0,
+            output_rows,
+            tokens,
+            kSampleCount);
+
+    const std::vector<double> expected =
+        projection_oracle(
+            weight,
+            weight_row_offset,
+            output_rows,
+            activation,
+            hidden,
+            tokens,
+            kSampleCount);
+
+    return compare(
+        label,
+        actual,
+        expected,
+        kAttnInputProjA16Tolerance);
+}
+
+
 int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& gate_value,
                    std::int32_t tokens) {
     constexpr std::int32_t kHidden      = 5120;
@@ -84,6 +219,191 @@ int run_q4_q5_case(DevicePackedWeight& query_key, DevicePackedWeight& gate_value
     return failures;
 }
 
+
+int run_q4_q4_strided_output_case(std::int32_t tokens) {
+
+    constexpr std::int32_t kHidden     = 5120;
+    constexpr std::int32_t kQRows      = 6144;
+    constexpr std::int32_t kKvRows     = 1024;
+    constexpr std::int32_t kParentRows = 8192;
+
+    DevicePackedWeight query_key(
+        quantized_weight::make_patterned_weight(
+            QType::Q4G64_F16S,
+            kQRows + kKvRows,
+            kHidden,
+            151U));
+
+    DevicePackedWeight gate_value(
+        quantized_weight::make_patterned_weight(
+            QType::Q4G64_F16S,
+            kQRows + kKvRows,
+            kHidden,
+            157U));
+
+    const std::vector<float> activation =
+        make_bf16_activation(
+            kHidden,
+            tokens,
+            163U + static_cast<std::uint32_t>(tokens));
+
+    const std::vector<std::uint16_t> activation_bits =
+        bf16_bits(activation);
+
+    DeviceBuffer device_activation =
+        to_device(activation_bits);
+
+    GuardedBf16Tensor q_parent(kParentRows, tokens);
+    GuardedBf16Tensor g_parent(kParentRows, tokens);
+    GuardedBf16Tensor k_parent(kParentRows, tokens);
+    GuardedBf16Tensor v_parent(kParentRows, tokens);
+
+    Tensor x(
+        device_activation.p,
+        DType::BF16,
+        {kHidden, tokens});
+
+    Tensor q = q_parent.tensor();
+    Tensor g = g_parent.tensor();
+    Tensor k = k_parent.tensor();
+    Tensor v = v_parent.tensor();
+
+    // Preserve the parent's physical column stride while exposing
+    // only the logical rows expected by attn_input_proj.
+    q.ne[0] = kQRows;
+    g.ne[0] = kQRows;
+    k.ne[0] = kKvRows;
+    v.ne[0] = kKvRows;
+
+    const std::int64_t q_stride =
+        q.nb[1] /
+        static_cast<std::int64_t>(sizeof(std::uint16_t));
+
+    const std::int64_t g_stride =
+        g.nb[1] /
+        static_cast<std::int64_t>(sizeof(std::uint16_t));
+
+    const std::int64_t k_stride =
+        k.nb[1] /
+        static_cast<std::int64_t>(sizeof(std::uint16_t));
+
+    const std::int64_t v_stride =
+        v.nb[1] /
+        static_cast<std::int64_t>(sizeof(std::uint16_t));
+
+    std::printf(
+        "STRIDED_LAYOUT T=%d "
+        "q_rows=%d q_stride=%lld "
+        "g_rows=%d g_stride=%lld "
+        "k_rows=%d k_stride=%lld "
+        "v_rows=%d v_stride=%lld\n",
+        tokens,
+        q.ne[0],
+        static_cast<long long>(q_stride),
+        g.ne[0],
+        static_cast<long long>(g_stride),
+        k.ne[0],
+        static_cast<long long>(k_stride),
+        v.ne[0],
+        static_cast<long long>(v_stride));
+
+    if (!(q_stride > q.ne[0] &&
+          g_stride > g.ne[0] &&
+          k_stride > k.ne[0] &&
+          v_stride > v.ne[0])) {
+
+        std::cerr
+            << "ERROR: strided case is not actually "
+               "non-contiguous\n";
+
+        return 1;
+    }
+
+    ops::attn_input_proj(
+        x,
+        query_key.view(),
+        gate_value.view(),
+        q,
+        g,
+        k,
+        v,
+        nullptr);
+
+    cuda_synchronize();
+
+    const std::string suffix =
+        " Q4/Q4 STRIDED A16 T=" +
+        std::to_string(tokens);
+
+    int failures = 0;
+
+    failures += verify_output_strided_view(
+        "attn q" + suffix,
+        q,
+        query_key.host,
+        0,
+        kQRows,
+        activation,
+        kHidden,
+        tokens);
+
+    failures += verify_output_strided_view(
+        "attn k" + suffix,
+        k,
+        query_key.host,
+        kQRows,
+        kKvRows,
+        activation,
+        kHidden,
+        tokens);
+
+    failures += verify_output_strided_view(
+        "attn gate" + suffix,
+        g,
+        gate_value.host,
+        0,
+        kQRows,
+        activation,
+        kHidden,
+        tokens);
+
+    failures += verify_output_strided_view(
+        "attn value" + suffix,
+        v,
+        gate_value.host,
+        kQRows,
+        kKvRows,
+        activation,
+        kHidden,
+        tokens);
+
+    failures += verify_preserved(
+        "attn x" + suffix,
+        device_activation,
+        activation_bits);
+
+    failures += query_key.verify_preserved(
+        "attn query/key" + suffix);
+
+    failures += gate_value.verify_preserved(
+        "attn gate/value" + suffix);
+
+    failures += q_parent.verify_guards(
+        "attn q parent" + suffix);
+
+    failures += g_parent.verify_guards(
+        "attn g parent" + suffix);
+
+    failures += k_parent.verify_guards(
+        "attn k parent" + suffix);
+
+    failures += v_parent.verify_guards(
+        "attn v parent" + suffix);
+
+    return failures;
+}
+
+
 int run_q4_q5() {
     constexpr std::int32_t kHidden = 5120;
     constexpr std::int32_t kParent = 7168;
@@ -91,11 +411,18 @@ int run_q4_q5() {
         quantized_weight::make_patterned_weight(QType::Q4G64_F16S, kParent, kHidden, 103U));
     DevicePackedWeight gate_value(
         quantized_weight::make_patterned_weight(QType::Q5G64_F16S, kParent, kHidden, 107U));
+    DevicePackedWeight gate_value_q4(
+        quantized_weight::make_patterned_weight(QType::Q4G64_F16S, kParent, kHidden, 109U));
 
     int failures = 0;
-    for (const std::int32_t tokens : {1, 2, 16, 17, 21, 48}) {
+    for (const std::int32_t tokens : {1, 2, 16, 17, 21, 48, 129, 321, 621, 896}) {
         failures += run_q4_q5_case(query_key, gate_value, tokens);
+        failures += run_q4_q5_case(query_key, gate_value_q4, tokens);
     }
+    for (const std::int32_t tokens : {17, 129, 621, 896}) {
+        failures += run_q4_q4_strided_output_case(tokens);
+    }
+
     return failures;
 }
 

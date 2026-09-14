@@ -100,7 +100,8 @@ void q4_rowsplit_gemm_mma_kernel(
     std::int32_t rows,
     std::int32_t k,
     std::int32_t cols,
-    std::int32_t padded_k) {
+    std::int32_t padded_k,
+    std::int64_t out_col_stride) {
     // clang-format on
     using Schedule       = Schedule_;
     constexpr bool kFull = Full;
@@ -379,32 +380,32 @@ void q4_rowsplit_gemm_mma_kernel(
             const int output_col1 = output_col0 + 1;
             const float* values   = accum[mi][ni];
             if constexpr (kFull) {
-                out[static_cast<std::int64_t>(output_col0) * rows + output_row0] =
+                out[static_cast<std::int64_t>(output_col0) * out_col_stride + output_row0] =
                     __float2bfloat16_rn(values[0]);
-                out[static_cast<std::int64_t>(output_col1) * rows + output_row0] =
+                out[static_cast<std::int64_t>(output_col1) * out_col_stride + output_row0] =
                     __float2bfloat16_rn(values[1]);
-                out[static_cast<std::int64_t>(output_col0) * rows + output_row1] =
+                out[static_cast<std::int64_t>(output_col0) * out_col_stride + output_row1] =
                     __float2bfloat16_rn(values[2]);
-                out[static_cast<std::int64_t>(output_col1) * rows + output_row1] =
+                out[static_cast<std::int64_t>(output_col1) * out_col_stride + output_row1] =
                     __float2bfloat16_rn(values[3]);
             } else {
                 if (output_row0 < rows) {
                     if (output_col0 < cols) {
-                        out[static_cast<std::int64_t>(output_col0) * rows + output_row0] =
+                        out[static_cast<std::int64_t>(output_col0) * out_col_stride + output_row0] =
                             __float2bfloat16_rn(values[0]);
                     }
                     if (output_col1 < cols) {
-                        out[static_cast<std::int64_t>(output_col1) * rows + output_row0] =
+                        out[static_cast<std::int64_t>(output_col1) * out_col_stride + output_row0] =
                             __float2bfloat16_rn(values[1]);
                     }
                 }
                 if (output_row1 < rows) {
                     if (output_col0 < cols) {
-                        out[static_cast<std::int64_t>(output_col0) * rows + output_row1] =
+                        out[static_cast<std::int64_t>(output_col0) * out_col_stride + output_row1] =
                             __float2bfloat16_rn(values[2]);
                     }
                     if (output_col1 < cols) {
-                        out[static_cast<std::int64_t>(output_col1) * rows + output_row1] =
+                        out[static_cast<std::int64_t>(output_col1) * out_col_stride + output_row1] =
                             __float2bfloat16_rn(values[3]);
                     }
                 }
