@@ -1,0 +1,45 @@
+name: Publish HF README
+
+on:
+  workflow_dispatch:
+    inputs:
+      hf_repo:
+        description: Required Hugging Face model repository, for example username/repository
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish-readme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install huggingface_hub
+        run: |
+          python3 -m pip install --upgrade pip wheel
+          python3 -m pip install "huggingface_hub>=1.20.0"
+
+      - name: Publish README.md to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ inputs.hf_repo }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -n "$HF_TOKEN"
+          test -s hf/README.md
+          # Publish the source README (hf/README.md) as the repo's README.md.
+          # Keep Xet enabled — huggingface_hub>=1.20 streams small text uploads
+          # reliably; a text file is far below any commit timeout.
+          hf upload "$HF_REPO" hf/README.md README.md \
+            --repo-type model \
+            --token "$HF_TOKEN" \
+            --commit-message "docs: update model card"
+          echo "README published to https://huggingface.co/$HF_REPO"
