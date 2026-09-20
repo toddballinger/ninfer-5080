@@ -10,6 +10,23 @@
 namespace ninfer::ops::detail {
 namespace {
 
+// bb844c43 semantic port for Q4 [4096,5120].
+// These are the two upstream-tested 32x32 schedules, kept in the
+// fork's existing centralized MMA module.
+using Q4MmaR32C32WideSchedule =
+    Q4RowSplitMmaGemmSchedule<
+        32, 32, 64, 16, 8, 4, 2,
+        Q4FragmentPipeline::Serial,
+        Cache::cg, Cache::cg,
+        Q4ScaleLoad::Pair32>;
+
+using Q4MmaR32C32Schedule =
+    Q4RowSplitMmaGemmSchedule<
+        32, 32, 64, 16, 16, 3, 2,
+        Q4FragmentPipeline::Serial,
+        Cache::cg, Cache::cg,
+        Q4ScaleLoad::Pair32>;
+
 using Q4MmaR64C32Schedule =
     Q4RowSplitMmaGemmSchedule<64, 32, 64, 16, 8, 2, 2, Q4FragmentPipeline::Serial, Cache::cg,
                               Cache::cg, Q4ScaleLoad::Pair32>;
@@ -119,6 +136,30 @@ void q4_rowsplit_mma_prewarm() {
     CUDA_CHECK(cudaFuncGetAttributes(
         &attr,
         q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR32C32WideSchedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR32C32WideSchedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR32C32Schedule,
+            true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
+            Q4MmaR32C32Schedule,
+            false>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_rowsplit_gemm_mma_kernel<
             Q4MmaR64C32Schedule,
             true>));
 
@@ -284,6 +325,20 @@ void q4_rowsplit_mma_prewarm() {
             Q4MmaR64C128Schedule,
             false>));
 
+}
+
+void launch_q4_mma_r32_c32_wide(
+    const Tensor& x, const Weight& w, Tensor& out,
+    cudaStream_t stream) {
+    launch_route<Q4MmaR32C32WideSchedule>(
+        x, w, out, stream);
+}
+
+void launch_q4_mma_r32_c32(
+    const Tensor& x, const Weight& w, Tensor& out,
+    cudaStream_t stream) {
+    launch_route<Q4MmaR32C32Schedule>(
+        x, w, out, stream);
 }
 
 void launch_q4_mma_r64_c32(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream) {

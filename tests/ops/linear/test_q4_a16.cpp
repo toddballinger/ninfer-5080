@@ -23,11 +23,45 @@ int q4_a16_conformance() {
     failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
                           {1024, 5120, 101U, Comparison::Full, true, kN1024K5120});
 
-    constexpr std::array kN4096K5120{
-        a16(1), a16(2), a16(3), a16(4), a16(5), a16(6), a16(8), a16(16), a16(17), a16(18), a16(128),
+    // bb844c43 semantic-port coverage: every K-split capacity edge,
+    // both R32C32 crossover edges, and the R64C128 fallback boundary.
+    constexpr std::array kN4096K5120Full{
+        a16(1),
+        a16(4), a16(8),
+        a16(13), a16(16),
+        a16(17), a16(24),
+        a16(25), a16(32),
+        a16(33), a16(48), a16(64),
+        a16(65), a16(128),
     };
-    failures += run_shape("Q4_A16", ActivationCompute::A16, make_q4g64_f16s_weight,
-                          {4096, 5120, 103U, Comparison::Sampled, false, kN4096K5120});
+    failures += run_shape(
+        "Q4_A16",
+        ActivationCompute::A16,
+        make_q4g64_f16s_weight,
+        {4096, 5120, 103U, Comparison::Full, true,
+         kN4096K5120Full});
+
+    constexpr std::array kN4096K5120{
+        a16(2), a16(3),
+        a16(5), a16(6), a16(7),
+        a16(9), a16(12), a16(15),
+        a16(20), a16(23),
+        a16(28), a16(31),
+        a16(40), a16(56), a16(63),
+        a16(72), a16(96), a16(112),
+        a16(159), a16(160), a16(161),
+        a16(192),
+        a16(255), a16(256), a16(257),
+        a16(287), a16(288), a16(289),
+        a16(320), a16(321), a16(511), a16(512),
+        a16(513), a16(1023), a16(1024),
+    };
+    failures += run_shape(
+        "Q4_A16",
+        ActivationCompute::A16,
+        make_q4g64_f16s_weight,
+        {4096, 5120, 103U, Comparison::Sampled, false,
+         kN4096K5120});
 
     constexpr std::array kN6144K5120{
         a16(1), a16(2),  a16(3),  a16(4),  a16(7),  a16(8),

@@ -1,10 +1,13 @@
 #include "ops/linear/q4/q4_launch.h"
 
 #include "core/device.h"
+#include "ops/linear/q4/q4_ksplit_mma.cuh"
+#include "ops/linear/q4/q4_ksplit_strided_store.cuh"
 #include "ops/linear/q4/q4_small_t_mma.cuh"
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -51,6 +54,87 @@ bool matches(const Tensor& x, const Weight& weight) {
 
 } // namespace
 
+using Q4N4096K5120KSplitGeometry =
+    Q4KSplitLinearGeometry<4096, 5120>;
+
+template <int Capacity>
+void launch_q4_4096_5120_ksplit_impl(
+    const Tensor& x,
+    const Weight& weight,
+    Tensor& out,
+    cudaStream_t stream) {
+
+    using Geometry = Q4N4096K5120KSplitGeometry;
+    using Store = Q4KSplitStridedStore<false, 0>;
+
+    static_assert(
+        4096 % Q4KSplitMmaSchedule::kRowsPerCta == 0);
+
+    if (x.ne[0] != 5120 ||
+        weight.n != 4096 ||
+        weight.k != 5120 ||
+        weight.padded_shape[1] != 5120 ||
+        out.ne[0] != 4096 ||
+        x.ne[1] < 1 ||
+        x.ne[1] > Capacity) {
+        throw std::invalid_argument(
+            "q4 4096x5120 K-split: unsupported problem");
+    }
+
+    if (out.nb[1] %
+            static_cast<std::int64_t>(
+                sizeof(__nv_bfloat16)) !=
+        0) {
+        throw std::invalid_argument(
+            "q4 4096x5120 K-split: output stride is not BF16 aligned");
+    }
+
+    const std::int64_t out_ld64 =
+        out.nb[1] /
+        static_cast<std::int64_t>(
+            sizeof(__nv_bfloat16));
+
+    if (out_ld64 < out.ne[0] ||
+        out_ld64 >
+            static_cast<std::int64_t>(
+                std::numeric_limits<std::int32_t>::max())) {
+        throw std::invalid_argument(
+            "q4 4096x5120 K-split: invalid output stride");
+    }
+
+    constexpr int TileCols =
+        ((Capacity + 7) / 8) * 8;
+
+    const Store store{
+        static_cast<__nv_bfloat16*>(out.data),
+        static_cast<std::int32_t>(out_ld64),
+        nullptr,
+        0,
+        x.ne[1],
+    };
+
+    q4_ksplit_mma_kernel<
+        Geometry,
+        TileCols,
+        Capacity,
+        Store,
+        Q4KSplitIdentityRows,
+        true>
+        <<<4096 / 16,
+           Q4KSplitMmaSchedule::kThreads,
+           0,
+           stream>>>(
+            static_cast<const __nv_bfloat16*>(x.data),
+            static_cast<const std::uint8_t*>(weight.qdata),
+            static_cast<const std::uint8_t*>(weight.scales),
+            static_cast<__nv_bfloat16*>(out.data),
+            store,
+            {},
+            x.ne[1]);
+
+    CUDA_CHECK(cudaGetLastError());
+}
+
 using Qwen38DownGeometry   = Q4LinearGeometry<5120, 17408>;
 using Qwen38GdnOutGeometry = Q4LinearGeometry<5120, 6144>;
 using Qwen38HeadGeometry   = Q4LinearGeometry<248320, 5120>;
@@ -58,6 +142,37 @@ using Qwen38HeadGeometry   = Q4LinearGeometry<248320, 5120>;
 
 void q4_small_t_mma_prewarm() {
     cudaFuncAttributes attr{};
+
+    // bb844c43 semantic port: force residency of the four new
+    // 4096x5120 K-split specializations before runtime/KV capacity
+    // is finalized. This preserves the fork's tight true-128K
+    // memory-planning discipline.
+    using KSplitGeometry = Q4N4096K5120KSplitGeometry;
+    using KSplitStore = Q4KSplitStridedStore<false, 0>;
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_ksplit_mma_kernel<
+            KSplitGeometry, 8, 8, KSplitStore,
+            Q4KSplitIdentityRows, true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_ksplit_mma_kernel<
+            KSplitGeometry, 16, 16, KSplitStore,
+            Q4KSplitIdentityRows, true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_ksplit_mma_kernel<
+            KSplitGeometry, 24, 24, KSplitStore,
+            Q4KSplitIdentityRows, true>));
+
+    CUDA_CHECK(cudaFuncGetAttributes(
+        &attr,
+        q4_ksplit_mma_kernel<
+            KSplitGeometry, 32, 32, KSplitStore,
+            Q4KSplitIdentityRows, true>));
 
     // Force CUDA residency for the Qwen3.8 Q4 small-T module before
     // explicit KV/runtime capacity is resolved. These are the T=4
@@ -97,6 +212,35 @@ void q4_small_t_mma_prewarm() {
             8,
             4>));
 }
+
+void launch_q4_4096_5120_ksplit_c8(
+    const Tensor& x, const Weight& weight, Tensor& out,
+    cudaStream_t stream) {
+    launch_q4_4096_5120_ksplit_impl<8>(
+        x, weight, out, stream);
+}
+
+void launch_q4_4096_5120_ksplit_c16(
+    const Tensor& x, const Weight& weight, Tensor& out,
+    cudaStream_t stream) {
+    launch_q4_4096_5120_ksplit_impl<16>(
+        x, weight, out, stream);
+}
+
+void launch_q4_4096_5120_ksplit_c24(
+    const Tensor& x, const Weight& weight, Tensor& out,
+    cudaStream_t stream) {
+    launch_q4_4096_5120_ksplit_impl<24>(
+        x, weight, out, stream);
+}
+
+void launch_q4_4096_5120_ksplit_c32(
+    const Tensor& x, const Weight& weight, Tensor& out,
+    cudaStream_t stream) {
+    launch_q4_4096_5120_ksplit_impl<32>(
+        x, weight, out, stream);
+}
+
 
 void launch_q4_draft_head_small_t(const Tensor& x, const Weight& weight, Tensor& out,
                                   cudaStream_t stream) {

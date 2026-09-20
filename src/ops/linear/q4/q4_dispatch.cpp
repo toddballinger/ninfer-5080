@@ -56,8 +56,32 @@ Q4Launch select_q4_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
             return launch_q4_mma_r64_c128;
         case 4096:
             if (t == 1) { return launch_q4_gemv_r1_w8_direct; }
+
+            // RTX 5080 retune of upstream bb844c43.
+            //
+            // K-split loses to the existing SIMT routes at T=2..4,
+            // but wins decisively from T=5 onward.
             if (t <= 4) { return launch_q4_simt_r8_c4; }
-            if (t <= 16) { return launch_q4_simt_r8_c8; }
+            if (t <= 8) { return launch_q4_4096_5120_ksplit_c8; }
+            if (t <= 16) { return launch_q4_4096_5120_ksplit_c16; }
+            if (t <= 24) { return launch_q4_4096_5120_ksplit_c24; }
+            if (t <= 32) { return launch_q4_4096_5120_ksplit_c32; }
+
+            if (t <= 64) { return launch_q4_mma_r32_c32_wide; }
+
+            // R32C32 wins through the five-tile T=160 endpoint.
+            // At T=161+ its sixth tile makes R64C128 materially faster.
+            if (t <= 160) { return launch_q4_mma_r32_c32; }
+
+            // R64C128 remains best through its two-tile T=256 endpoint.
+            if (t <= 256) { return launch_q4_mma_r64_c128; }
+
+            // Crossing 256 forces another R64C128 column tile, making
+            // R32C32 faster through its measured T=288 endpoint.
+            if (t <= 288) { return launch_q4_mma_r32_c32; }
+
+            // 289+ is effectively tied or favors the incumbent, so keep
+            // the established route rather than extending a marginal band.
             return launch_q4_mma_r64_c128;
         case 6144:
             if (t == 1) { return launch_q4_gemv_r1_w8_direct; }
