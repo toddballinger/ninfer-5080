@@ -508,6 +508,7 @@ std::string format_server_start_json(
                               {"peak_staging_bytes", load.peak_staging_bytes},
                               {"tensor_count", load.tensor_count},
                               {"resource_count", load.resource_count},
+                              {"embed_host_weight_bytes", load.embed_host_weight_bytes},
                               {"load_seconds", load.load_seconds},
                               {"upload_seconds", load.upload_seconds}};
     record["engine"]   = Json{

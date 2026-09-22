@@ -115,6 +115,18 @@ ConstructedTarget construct_registered(const EngineOptions& options, DeviceConte
                                               progress.callback ? &progress : nullptr);
     const artifact::MaterializationStats stats = materialized.stats();
 
+    // Capture the host-resident token-embedding bytes (nonzero only under --embed-cpu) from the
+    // host-mapped materialization, before the load plan is moved into the loaded model.
+    std::uint64_t embed_host_weight_bytes = 0;
+    if (options.embed_cpu) {
+        const auto& objects = reader.objects();
+        for (const auto& placement : load_plan.materialization().host_mapped_objects) {
+            if (object_name(objects.at(placement.object.index)) == "text/token_embedding") {
+                embed_host_weight_bytes = placement.bytes;
+            }
+        }
+    }
+
     auto model = Target::construct_loaded_model(std::move(load_plan), std::move(materialized));
     device.synchronize();
 
@@ -197,6 +209,7 @@ ConstructedTarget construct_registered(const EngineOptions& options, DeviceConte
     summary.peak_staging_bytes   = stats.peak_staging_bytes;
     summary.tensor_count         = stats.tensor_count;
     summary.resource_count       = stats.resource_count;
+    summary.embed_host_weight_bytes = embed_host_weight_bytes;
     return ConstructedTarget{.active            = ActiveTarget(std::move(instance)),
                              .load              = std::move(summary),
                              .sampling_defaults = sampling_defaults};

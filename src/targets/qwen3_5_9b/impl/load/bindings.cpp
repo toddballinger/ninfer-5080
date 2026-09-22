@@ -25,8 +25,9 @@ using artifact::NumericFormat;
 bool is_full_layer(std::size_t layer) { return layer >= 3 && (layer - 3) % 4 == 0; }
 
 WeightPlan bind_weight(artifact::Binder& binder, std::string_view name, NumericFormat format,
-                       std::initializer_list<std::uint64_t> shape) {
-    return WeightPlan{.object = artifact::bind_device_tensor(binder, name, format, shape),
+                       std::initializer_list<std::uint64_t> shape,
+                       artifact::TensorPlacement placement = artifact::TensorPlacement::Device) {
+    return WeightPlan{.object = artifact::bind_tensor(binder, name, format, shape, placement),
                       .format = format};
 }
 
@@ -266,8 +267,12 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
     out.frontend = qwen3_6::bind_frontend_resources(binder);
 
     // Token embedding
+    const artifact::TensorPlacement embedding_placement =
+        features.embed_cpu ? artifact::TensorPlacement::HostMapped
+                           : artifact::TensorPlacement::Device;
     out.token_embedding = bind_weight(binder, "text/token_embedding",
-                                      NumericFormat::Q6G64_F16S, {248320, 4096});
+                                      NumericFormat::Q6G64_F16S, {248320, 4096},
+                                      embedding_placement);
 
     // Text layers
     bind_text_layers(binder, out);

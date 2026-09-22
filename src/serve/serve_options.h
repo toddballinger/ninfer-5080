@@ -45,6 +45,7 @@ struct ServeOptions {
     SpeculativeOptions speculative;
     PrefixCheckpointPolicy prefix_checkpoint_policy = PrefixCheckpointPolicy::StableTurn;
     bool enable_vision      = false;
+    bool embed_cpu          = false;
     bool use_cuda_graph     = true;
     bool allow_prefix_reuse = true;
     bool enable_thinking =
