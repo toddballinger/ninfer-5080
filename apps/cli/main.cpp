@@ -152,6 +152,9 @@ void print_load_summary(const ninfer::LoadSummary& load, double wall_seconds) {
     print_metric("artifact file read", format_bytes(load.artifact_bytes_read));
     print_metric("weight H2D", format_bytes(load.host_to_device_bytes));
     print_metric("pinned staging peak", format_bytes(load.peak_staging_bytes));
+    if (load.embed_host_weight_bytes != 0) {
+        print_metric("embedding host-resident", format_bytes(load.embed_host_weight_bytes));
+    }
     print_metric("tensors/resources",
                  std::to_string(load.tensor_count) + " / " + std::to_string(load.resource_count));
 }
@@ -269,6 +272,7 @@ int main(int argc, char** argv) {
         engine_options.kv_cache       = cli.kv_cache;
         engine_options.speculative    = cli.speculative;
         engine_options.enable_vision  = cli.enable_vision;
+        engine_options.embed_cpu      = cli.embed_cpu;
         engine_options.use_cuda_graph = cli.use_cuda_graph;
         engine_options.load_progress  = load_progress.callback();
 

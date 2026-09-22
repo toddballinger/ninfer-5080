@@ -38,6 +38,10 @@ server must accept image or video input. Speculative residency is likewise froze
 `--lm-head-draft` additionally loads the optimized proposal head. DFlash is 35B-A3B text-only and
 cannot be combined with `--vision`. A later request cannot enable a capability omitted at startup.
 
+`--embed-cpu` independently keeps the token embedding table in pinned host RAM and reads the needed
+rows over PCIe ([Embedding CPU offload](#embedding-cpu-offload)); it is orthogonal to the Vision
+flags and works with every execution route, including speculative decoding.
+
 ## Endpoints
 
 | Method and path | Behavior |
@@ -447,6 +451,31 @@ curl http://127.0.0.1:8080/v1/models \
 
 `--cors` adds permissive browser CORS headers. It is disabled by default.
 
+## Embedding CPU offload
+
+`--embed-cpu` keeps the token embedding table in pinned host RAM instead of device memory. The
+table is the model's largest single weight (the `[vocab_size, hidden_size]` `token_embedding`);
+binding it to host RAM frees that VRAM. The gather is the same CUDA `embedding` Op on every route
+— the only difference is that the table's planes point at page-locked host memory, so the kernel
+reads the needed rows over PCIe (UVA) instead of from device memory.
+
+The flag is independent of `--vision` and can be combined with it, and with every execution route,
+including the speculative backends (`--spec mtp|dflash|dflash2`). The speculative backends reuse the
+same target `token_embedding` table, and their target-verify and draft-stem gathers are interior
+device ops inside the captured decode graph; because the gather is a device Op (not a host gather),
+it runs inside the captured body unchanged. The same artifact serves both residencies; host
+residency is a binding choice at load, not an artifact property.
+
+**Memory.** The table's resident bytes move from the GPU weights arena to host RAM and are reported
+as `server_start.load.embed_host_weight_bytes` (computed from the table's stored payload size). The
+freed VRAM equals the table's stored size for its quantization. There is no staging buffer or worker
+pool: the GPU reads the table directly over PCIe.
+
+**Latency.** A decode round gathers only a handful of rows (tens of rows, < 1 MB), so the per-round
+PCIe traffic is negligible. Prefill gathers the whole chunk (up to the prompt length), which is a
+one-time cost per request. Use `--embed-cpu` when the freed VRAM matters more than the per-round
+PCIe read cost.
+
 ## Server options
 
 | Option | Meaning | Default |
@@ -476,6 +505,7 @@ curl http://127.0.0.1:8080/v1/models \
 | `--lm-head-draft` | optimized proposal head | off |
 | `--default-max-tokens N` | output limit when omitted by a request | `8192` |
 | `--vision` | enable media input and load Vision GPU allocations | off |
+| `--embed-cpu` | keep the token embedding table in pinned host RAM; the GPU reads the needed rows over PCIe; works with all routes including `--spec` | off |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
 | `--no-thinking` | disable thinking by default | thinking on |

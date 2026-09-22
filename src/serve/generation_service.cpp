@@ -237,6 +237,7 @@ GenerationService::GenerationService(ServeOptions options, LoadProgress load_pro
     engine_options.kv_cache                 = options_.kv_cache;
     engine_options.prefix_checkpoint_policy = options_.prefix_checkpoint_policy;
     engine_options.enable_vision            = options_.enable_vision;
+    engine_options.embed_cpu                = options_.embed_cpu;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
     engine_options.speculative              = options_.speculative;
     engine_options.media_cache_bytes        = options_.media_cache_bytes;

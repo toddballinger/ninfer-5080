@@ -73,6 +73,7 @@ Runtime and Op references:
 - [Op admission, contracts, ownership, qualification, and performance rules](maintainer/op-development.md)
 - [ReplaySSM GDN technical reference](maintainer/replayssm-gdn.md)
 - [Linear benchmark contract and registered suites](maintainer/linear-benchmark.md)
+- [Embedding CPU offload](maintainer/embed-cpu-offload.md)
 
 Artifact and model references:
 

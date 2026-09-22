@@ -102,6 +102,10 @@ struct EngineOptions {
     // Zero selects a bounded worker count from the detected host concurrency.
     std::uint32_t media_preprocess_threads = 0;
     bool enable_vision                     = false;
+    // When set, the token embedding table is resident in pinned host RAM and the embedding gather
+    // reads the needed rows over PCIe (UVA). Works with every execution route, including the
+    // speculative backends.
+    bool embed_cpu                         = false;
     bool use_cuda_graph                    = true;
     LoadProgress load_progress;
 };
@@ -476,6 +480,8 @@ struct LoadSummary {
     std::uint64_t peak_staging_bytes   = 0;
     std::size_t tensor_count           = 0;
     std::size_t resource_count         = 0;
+    // Host-resident token-embedding weight bytes (nonzero only under --embed-cpu).
+    std::uint64_t embed_host_weight_bytes = 0;
 };
 
 } // namespace ninfer

@@ -99,8 +99,12 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, qwen3_6::StartupFeature
     BindingPlan& out    = load_plan.bindings;
     out.frontend        = qwen3_6::bind_frontend_resources(binder);
     out.features        = features;
-    out.token_embedding = artifact::bind_device_tensor(binder, "text/token_embedding",
-                                                       NumericFormat::W8G32_F16S, {248320, 2048});
+    const artifact::TensorPlacement embedding_placement =
+        features.embed_cpu ? artifact::TensorPlacement::HostMapped
+                           : artifact::TensorPlacement::Device;
+    out.token_embedding = artifact::bind_tensor(binder, "text/token_embedding",
+                                                NumericFormat::W8G32_F16S, {248320, 2048},
+                                                embedding_placement);
 
     for (std::size_t layer = 0; layer < kTextLayers; ++layer) {
         TextLayerPlan& target    = out.text_layers[layer];
