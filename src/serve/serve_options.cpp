@@ -74,7 +74,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8|q4] [--spec mtp|dflash|dflash2 --draft-tokens N] "
            "[--default-max-tokens N] [--default-thinking-budget N] "
-           "[--vision] [--embed-cpu] [--no-cuda-graph] [--no-prefix-reuse] "
+           "[--vision] [--embedding-host] [--no-cuda-graph] [--no-prefix-reuse] "
            "[--prefix-checkpoint-policy stable-turn|rolling-tool] "
            "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
@@ -93,9 +93,8 @@ std::string serve_usage_text(const char* argv0) {
            "default\n"
            "       --log-stats-interval-ms defaults to 5000; 0 disables periodic throughput logs\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
-           "       --embed-cpu keeps the token embedding table in pinned host RAM; the GPU reads\n"
-           "       the needed rows over PCIe (frees the table's GPU footprint); works with all\n"
-           "       execution routes, including speculative decoding\n"
+           "       --embedding-host keeps the token-embedding table in pinned host memory. The CUDA\n"
+           "       embedding kernel remains GPU-executed and reads the required rows over UVA/PCIe\n"
            "       --vision-max-tokens caps merged Vision tokens independently of text context; "
            "0 uses the historical automatic limit\n"
            "       --kv-capacity auto leaves " +
@@ -251,8 +250,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 static_cast<std::uint32_t>(value);
         } else if (arg == "--vision") {
             options.enable_vision = true;
-        } else if (arg == "--embed-cpu") {
-            options.embed_cpu = true;
+        } else if (arg == "--embedding-host") {
+            options.embedding_host = true;
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--no-prefix-reuse") {

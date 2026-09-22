@@ -535,7 +535,7 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
     const NumericFormat token_embedding_format = embedding_format(weights_profile);
     const NumericFormat lm_head_format = output_head_format(weights_profile);
     const artifact::TensorPlacement embedding_placement =
-        features.embed_cpu ? artifact::TensorPlacement::HostMapped
+        features.embedding_host ? artifact::TensorPlacement::HostMapped
                            : artifact::TensorPlacement::Device;
     out.token_embedding =
         bind_weight(binder, "text/token_embedding", token_embedding_format, {248320, 5120},

@@ -53,6 +53,21 @@ bool is_device_object(const ninfer::artifact::MaterializationPlan& plan,
     });
 }
 
+bool is_host_mapped_object(const ninfer::artifact::MaterializationPlan& plan,
+                           ninfer::artifact::ObjectHandle handle) {
+    return std::ranges::any_of(plan.host_mapped_objects, [handle](const auto& object) {
+        return object.object.index == handle.index;
+    });
+}
+
+std::uint64_t host_mapped_bytes(const ninfer::artifact::MaterializationPlan& plan,
+                                ninfer::artifact::ObjectHandle handle) {
+    for (const auto& object : plan.host_mapped_objects) {
+        if (object.object.index == handle.index) { return object.bytes; }
+    }
+    return 0;
+}
+
 std::size_t dflash2_device_objects(const ninfer::artifact::Reader& reader,
                                    const ninfer::artifact::MaterializationPlan& plan) {
     return static_cast<std::size_t>(
@@ -188,6 +203,52 @@ int verify_nvfp4(const std::filesystem::path& path) {
     return 0;
 }
 
+int verify_embedding_host(const std::filesystem::path& path, WeightsProfile profile) {
+    // Default: the token embedding table stays device-resident.
+    {
+        ninfer::artifact::Reader reader(path);
+        ninfer::artifact::Binder binder(reader);
+        const ArtifactLoadPlan plan = bind_artifact(binder, profile, all_features());
+        const auto& handle = plan.bindings.token_embedding.object;
+        if (!is_device_object(plan.materialization, handle) ||
+            is_host_mapped_object(plan.materialization, handle)) {
+            std::cerr << "default embedding placement is not device-resident: " << path << '\n';
+            return 1;
+        }
+    }
+    // --embedding-host: the table moves to pinned host memory and is read over UVA/PCIe.
+    {
+        ninfer::artifact::Reader reader(path);
+        ninfer::artifact::Binder binder(reader);
+        auto features = all_features();
+        features.embedding_host = true;
+        const ArtifactLoadPlan plan = bind_artifact(binder, profile, features);
+        const auto& handle = plan.bindings.token_embedding.object;
+        if (!is_host_mapped_object(plan.materialization, handle) ||
+            is_device_object(plan.materialization, handle)) {
+            std::cerr << "embedding-host placement is not host-mapped: " << path << '\n';
+            return 1;
+        }
+        // The reported host-resident bytes must equal the embedding's encoded payload size.
+        const auto* descriptor = reader.find("text/token_embedding");
+        if (descriptor == nullptr ||
+            !std::holds_alternative<ninfer::artifact::TensorDescriptor>(*descriptor)) {
+            std::cerr << "embedding descriptor missing: " << path << '\n';
+            return 1;
+        }
+        const auto& tensor = std::get<ninfer::artifact::TensorDescriptor>(*descriptor);
+        const std::uint64_t payload =
+            ninfer::artifact::tensor_encoded_size(tensor.layout, tensor.format, tensor.shape);
+        const std::uint64_t reported = host_mapped_bytes(plan.materialization, handle);
+        if (reported == 0 || reported != payload) {
+            std::cerr << "embedding-host byte report does not match the payload: reported="
+                      << reported << " payload=" << payload << " artifact=" << path << '\n';
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int verify_legacy_dflash2_compatibility(const std::filesystem::path& path, WeightsProfile profile) {
     {
         ninfer::artifact::Reader reader(path);
@@ -313,6 +374,13 @@ int main() {
     if (const int result = verify_profile_mismatch_rejection(); result != 0) { return result; }
     if (const int result = verify_groupwise(groupwise); result != 0) { return result; }
     if (const int result = verify_nvfp4(nvfp4); result != 0) { return result; }
+    if (const int result = verify_embedding_host(groupwise, WeightsProfile::Qwen36GroupwiseInt);
+        result != 0) {
+        return result;
+    }
+    if (const int result = verify_embedding_host(nvfp4, WeightsProfile::Qwen36Nvfp4); result != 0) {
+        return result;
+    }
     if (const int result =
             verify_legacy_dflash2_compatibility(groupwise, WeightsProfile::Qwen36GroupwiseInt);
         result != 0) {

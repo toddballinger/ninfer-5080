@@ -274,8 +274,8 @@ std::string usage_text(std::string_view program) {
         << "  --mtp-draft-tokens <0..5>   speculative draft window (default: 0)\n"
         << "  --lm-head-draft             use the optimized proposal head; requires MTP\n"
         << "  --device <id>               CUDA device ordinal (default: 0)\n"
-        << "  --embed-cpu                 keep the token embedding table in pinned host RAM; the\n"
-        << "                              GPU reads the needed rows over PCIe (UVA)\n"
+        << "  --embedding-host           keep the token-embedding table in pinned host memory; the\n"
+        << "                              CUDA embedding kernel stays GPU-executed over UVA/PCIe\n"
         << "  --no-cuda-graph             use eager decode\n"
         << "  --profile-measured          bracket one measured repetition with CUDA profiler API\n"
         << "  -o, --output <table|json|csv>  output format (default: table)\n"
@@ -335,8 +335,8 @@ BenchOptions parse_args(int argc, char** argv) {
             options.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--device") {
             options.device = parse_nonnegative(value("--device"), "device");
-        } else if (arg == "--embed-cpu") {
-            options.embed_cpu = true;
+        } else if (arg == "--embedding-host") {
+            options.embedding_host = true;
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--profile-measured") {
@@ -679,7 +679,7 @@ std::string format_json(const BenchEnvironment& env, const std::string& command,
         << "    \"mtp_draft_tokens\": " << env.mtp_draft_tokens << ",\n"
         << "    \"proposal_head\": \"" << proposal_head_name(env.proposal_head) << "\",\n"
         << "    \"use_cuda_graph\": " << (env.use_cuda_graph ? "true" : "false") << ",\n"
-        << "    \"embed_cpu\": " << (env.embed_cpu ? "true" : "false") << ",\n"
+        << "    \"embedding_host\": " << (env.embedding_host ? "true" : "false") << ",\n"
         << "    \"decode_path\": \"" << decode_path_name(env.use_cuda_graph, env.mtp_draft_tokens)
         << "\",\n"
         << "    \"decode_graph_prime\": {\"primed\": "

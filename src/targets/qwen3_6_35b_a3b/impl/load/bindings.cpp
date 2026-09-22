@@ -100,7 +100,7 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, qwen3_6::StartupFeature
     out.frontend        = qwen3_6::bind_frontend_resources(binder);
     out.features        = features;
     const artifact::TensorPlacement embedding_placement =
-        features.embed_cpu ? artifact::TensorPlacement::HostMapped
+        features.embedding_host ? artifact::TensorPlacement::HostMapped
                            : artifact::TensorPlacement::Device;
     out.token_embedding = artifact::bind_tensor(binder, "text/token_embedding",
                                                 NumericFormat::W8G32_F16S, {248320, 2048},

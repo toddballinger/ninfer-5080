@@ -38,8 +38,8 @@ server must accept image or video input. Speculative residency is likewise froze
 `--lm-head-draft` additionally loads the optimized proposal head. DFlash is 35B-A3B text-only and
 cannot be combined with `--vision`. A later request cannot enable a capability omitted at startup.
 
-`--embed-cpu` independently keeps the token embedding table in pinned host RAM and reads the needed
-rows over PCIe ([Embedding CPU offload](#embedding-cpu-offload)); it is orthogonal to the Vision
+`--embedding-host` independently keeps the token embedding table in pinned host RAM and reads the needed
+rows over PCIe ([Embedding host residency](#embedding-host-residency)); it is orthogonal to the Vision
 flags and works with every execution route, including speculative decoding.
 
 ## Endpoints
@@ -451,9 +451,9 @@ curl http://127.0.0.1:8080/v1/models \
 
 `--cors` adds permissive browser CORS headers. It is disabled by default.
 
-## Embedding CPU offload
+## Embedding host residency
 
-`--embed-cpu` keeps the token embedding table in pinned host RAM instead of device memory. The
+`--embedding-host` keeps the token embedding table in pinned host RAM instead of device memory. The
 table is the model's largest single weight (the `[vocab_size, hidden_size]` `token_embedding`);
 binding it to host RAM frees that VRAM. The gather is the same CUDA `embedding` Op on every route
 — the only difference is that the table's planes point at page-locked host memory, so the kernel
@@ -473,7 +473,7 @@ pool: the GPU reads the table directly over PCIe.
 
 **Latency.** A decode round gathers only a handful of rows (tens of rows, < 1 MB), so the per-round
 PCIe traffic is negligible. Prefill gathers the whole chunk (up to the prompt length), which is a
-one-time cost per request. Use `--embed-cpu` when the freed VRAM matters more than the per-round
+one-time cost per request. Use `--embedding-host` when the freed VRAM matters more than the per-round
 PCIe read cost.
 
 ## Server options
@@ -505,7 +505,7 @@ PCIe read cost.
 | `--lm-head-draft` | optimized proposal head | off |
 | `--default-max-tokens N` | output limit when omitted by a request | `8192` |
 | `--vision` | enable media input and load Vision GPU allocations | off |
-| `--embed-cpu` | keep the token embedding table in pinned host RAM; the GPU reads the needed rows over PCIe; works with all routes including `--spec` | off |
+| `--embedding-host` | keep the token embedding table in pinned host RAM; the GPU reads the needed rows over PCIe; works with all routes including `--spec` | off |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
 | `--no-thinking` | disable thinking by default | thinking on |

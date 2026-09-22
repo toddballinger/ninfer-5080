@@ -272,7 +272,7 @@ int main(int argc, char** argv) {
         engine_options.kv_cache       = cli.kv_cache;
         engine_options.speculative    = cli.speculative;
         engine_options.enable_vision  = cli.enable_vision;
-        engine_options.embed_cpu      = cli.embed_cpu;
+        engine_options.embedding_host      = cli.embedding_host;
         engine_options.use_cuda_graph = cli.use_cuda_graph;
         engine_options.load_progress  = load_progress.callback();
 

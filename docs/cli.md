@@ -55,7 +55,7 @@ GPU residency is frozen when the Engine starts:
 - Vision is disabled by default, omitting its weights, Vision scratch phase, and frozen
   request-transient allocation;
 - `--vision` loads those allocations and enables image/video input;
-- `--embed-cpu` keeps the token embedding table in pinned host RAM; the GPU reads the needed rows
+- `--embedding-host` keeps the token embedding table in pinned host RAM; the GPU reads the needed rows
   over PCIe (UVA), freeing the table's device footprint. It is orthogonal to the Vision flags and
   works with every execution route, including the speculative backends.
 
@@ -165,7 +165,7 @@ measured recommendation rather than a semantic limit.
 | `--messages <path>` | structured message/tool JSON input | mutually exclusive with `--prompt` and `--prompt-file` |
 | `--lm-head-draft` | optimized proposal head | off |
 | `--vision` | enable image/video input and load Vision GPU allocations | off |
-| `--embed-cpu` | keep the token embedding table in pinned host RAM; the GPU reads the needed rows over PCIe; works with all routes including `--spec` | off |
+| `--embedding-host` | keep the token embedding table in pinned host RAM; the GPU reads the needed rows over PCIe; works with all routes including `--spec` | off |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--no-thinking` | disable thinking in prompt rendering | thinking on |
 | `--reasoning-effort low\|medium\|xhigh` | select an effort exposed by the loaded chat template | template default |

@@ -1,6 +1,6 @@
-# Embedding host offload
+# Embedding host residency
 
-`--embed-cpu` keeps the `token_embedding` table in pinned host RAM instead of device memory. The
+`--embedding-host` keeps the `token_embedding` table in pinned host RAM instead of device memory. The
 table is the model's largest single weight — the `[vocab_size, hidden_size]` `token_embedding` — so
 binding it to host RAM frees that VRAM. The gather is the same CUDA `embedding` Op on every route;
 the only difference is that the table's planes point at page-locked host memory, so the kernel reads
@@ -9,7 +9,7 @@ the needed rows over PCIe (UVA) instead of from device memory.
 This reference owns the residency choice, the host-mapped materialization and its ownership, and the
 memory model of the host route. The embedding mathematics and the per-layer composition stay in the
 target model references; the `embedding` Op contract stays in [Op development](op-development.md);
-operator-facing flags and the memory tradeoff stay in the [serving guide](../serving.md#embedding-cpu-offload).
+operator-facing flags and the memory tradeoff stay in the [serving guide](../serving.md#embedding-host-residency).
 
 ## Residency
 
@@ -17,7 +17,7 @@ The `token_embedding` table is bound with exactly one of two placements, fixed a
 
 - **Device placement** (default): the table is uploaded to device memory and the `embedding` Op
   reads it from the device.
-- **Host-mapped placement** (`--embed-cpu`): the table is retained in page-locked host RAM and the
+- **Host-mapped placement** (`--embedding-host`): the table is retained in page-locked host RAM and the
   `embedding` Op reads the needed rows over PCIe (UVA).
 
 The gather is the same `embedding` Op in both cases — the Op is agnostic to where the table lives,
@@ -44,8 +44,8 @@ tower weights and the DFlash2 candidate-selector codebooks:
 - **Target** owns the residency choice: each target's `bind_artifact`
   (e.g. [`qwen3_6_27b/impl/load/bindings.cpp`](../../src/targets/qwen3_6_27b/impl/load/bindings.cpp))
   binds `text/token_embedding` with `TensorPlacement::HostMapped` when
-  `StartupFeatures::embed_cpu` is set, and `TensorPlacement::Device` otherwise. The flag flows from
-  `EngineOptions::embed_cpu` through
+  `StartupFeatures::embedding_host` is set, and `TensorPlacement::Device` otherwise. The flag flows from
+  `EngineOptions::embedding_host` through
   [`startup_features`](../../src/targets/qwen3_6/export/ninfer/targets/qwen3_6/startup_features.h)
   into every target's binding.
 - **Ops** own the gather: the `embedding` Op
@@ -92,8 +92,8 @@ fetched from.
 
 | Concern | Source |
 | --- | --- |
-| Engine option | [`include/ninfer/types.h`](../../include/ninfer/types.h) (`EngineOptions::embed_cpu`) |
-| Feature flow | [`startup_features.h`](../../src/targets/qwen3_6/export/ninfer/targets/qwen3_6/startup_features.h) (`StartupFeatures::embed_cpu`) |
+| Engine option | [`include/ninfer/types.h`](../../include/ninfer/types.h) (`EngineOptions::embedding_host`) |
+| Feature flow | [`startup_features.h`](../../src/targets/qwen3_6/export/ninfer/targets/qwen3_6/startup_features.h) (`StartupFeatures::embedding_host`) |
 | Residency binding (27B) | [`qwen3_6_27b/impl/load/bindings.cpp`](../../src/targets/qwen3_6_27b/impl/load/bindings.cpp) (`bind_artifact`) |
 | Residency binding (9B) | [`qwen3_5_9b/impl/load/bindings.cpp`](../../src/targets/qwen3_5_9b/impl/load/bindings.cpp) (`bind_artifact`) |
 | Residency binding (35B-A3B) | [`qwen3_6_35b_a3b/impl/load/bindings.cpp`](../../src/targets/qwen3_6_35b_a3b/impl/load/bindings.cpp) (`bind_artifact`) |
