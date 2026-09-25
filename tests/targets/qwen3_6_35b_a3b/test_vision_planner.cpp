@@ -141,6 +141,81 @@ int main() {
                   "validation is the later bound); a change here means serve gained the bound");
     }
 
+
+    // 4) Production Vision planner/workspace sizing: drive the production merged-Vision-budget
+    //    helper (apps/cli/options.h vision_merged_budget, which carries the qwen3_6
+    //    resolved_vision_token_limit rule) with the real values the production CLI records,
+    //    covering the three sizing classes the planner consumes: automatic/zero,
+    //    capacity-sized (the plan capacity is the binding limit), and a smaller
+    //    --vision-max-tokens cap. This is the production merged budget that drives the
+    //    Vision workspace capacity and the Vision forward/transient capacity the engine
+    //    consumes at startup; the test therefore exercises the planner sizing without
+    //    re-deriving its formula.
+    {
+        auto Budget = &ninfer::cli::vision_merged_budget; // production sizing rule
+
+        // (a) Automatic/zero: no --vision-max-tokens (0) gives the merged budget the plan
+        //     capacity clamped to the 32768 frontend merged limit.
+        {
+            failures += check(Budget(2048, 0) == 2048,
+                              "automatic Vision budget equals capacity when capacity is below 32768");
+            failures += check(Budget(65536, 0) == 32768,
+                              "automatic Vision budget is clamped to the 32768 merged limit");
+            failures += check(Budget(32768, 0) == 32768,
+                              "capacity at the 32768 boundary keeps the full merged budget");
+        }
+
+        // (b) Capacity-sized: the plan capacity (below 32768) is the binding limit, and an
+        //     explicit --vision-max-tokens above it cannot raise the budget beyond capacity.
+        {
+            failures += check(Budget(512, 0) == 512,
+                              "capacity-sized automatic budget equals the plan capacity");
+            failures += check(Budget(1024, 8192) == 1024,
+                              "a cap larger than capacity leaves the capacity-sized budget unchanged");
+            failures += check(Budget(2048, 4096) == 2048,
+                              "a 4096 cap on a 2048 capacity plan resolves to the capacity");
+        }
+
+        // (c) Smaller capped: an explicit --vision-max-tokens below capacity/limit lowers the
+        //     merged budget to the cap (the workspace and forward capacity shrink accordingly).
+        {
+            failures += check(Budget(65536, 1024) == 1024,
+                              "a 1024 cap on a 65536 capacity plan resolves to the cap");
+            failures += check(Budget(32768, 256) == 256,
+                              "a 256 cap on a full-limit capacity plan resolves to the cap");
+            failures += check(Budget(4000, 1024) == 1024,
+                              "a 1024 cap below a 4000 capacity plan resolves to the cap");
+        }
+
+        // (d) Real production CLI values: the parsed --vision-max-tokens and max_context
+        //     recorded by the production parser feed the production sizing helper end-to-end,
+        //     so the merged budget actually consumed by the planner is exercised, not a proxy.
+        {
+            const Options cli_auto =
+                cli_parse({"ninfer", "model.ninfer", "--prompt", "hello"});
+            failures += check(Budget(cli_auto.max_context, cli_auto.vision_max_tokens) ==
+                                  cli_auto.max_context,
+                              "automatic CLI plan (no --vision-max-tokens) resolves to its capacity");
+
+            const Options cli_cap =
+                cli_parse({"ninfer", "model.ninfer", "--prompt", "hello",
+                           "--max-context", "65536", "--vision-max-tokens", "1024"});
+            failures += check(Budget(cli_cap.max_context, cli_cap.vision_max_tokens) == 1024,
+                "a production CLI 1024 --vision-max-tokens on a 65536 capacity plan caps the budget");
+
+            const Options cli_auto_big =
+                cli_parse({"ninfer", "model.ninfer", "--prompt", "hello",
+                           "--max-context", "65536"});
+            failures += check(Budget(cli_auto_big.max_context, cli_auto_big.vision_max_tokens) == 32768,
+                              "automatic CLI budget on a 65536 capacity plan clamps to the merged limit");
+
+            const Options cli_small =
+                cli_parse({"ninfer", "model.ninfer", "--prompt", "hello",
+                           "--max-context", "4096", "--vision-max-tokens", "256"});
+            failures += check(Budget(cli_small.max_context, cli_small.vision_max_tokens) == 256,
+                              "a production CLI 256 --vision-max-tokens on a 4096 capacity plan resolves to the cap");
+        }
+    }
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }
