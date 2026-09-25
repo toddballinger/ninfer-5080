@@ -37,14 +37,6 @@ ServeOptions serve_parse(std::vector<std::string> arguments) {
     return parse_serve_options(static_cast<int>(argv.size()), argv.data());
 }
 
-// Reproduce the exact CLI-to-EngineOptions field the standalone CLI writes in
-// apps/cli/main.cpp: engine_options.vision_max_tokens = cli.vision_max_tokens;
-ninfer::EngineOptions engine_options_from_cli(const Options& cli) {
-    ninfer::EngineOptions options;
-    options.vision_max_tokens = cli.vision_max_tokens;
-    return options;
-}
-
 } // namespace
 
 int main() {

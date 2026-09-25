@@ -247,4 +247,21 @@ Options parse_options(int argc, char** argv) {
     return options;
 }
 
+EngineOptions engine_options_from_cli(const Options& cli, std::optional<LoadProgress> load_progress) {
+    EngineOptions options;
+    options.artifact_path     = cli.artifact_path;
+    options.device            = cli.device;
+    options.max_context       = cli.max_context;
+    options.kv_capacity       = cli.kv_capacity;
+    options.prefill_chunk     = cli.prefill_chunk;
+    options.kv_cache          = cli.kv_cache;
+    options.speculative       = cli.speculative;
+    options.enable_vision     = cli.enable_vision;
+    options.vision_max_tokens = cli.vision_max_tokens;
+    options.embedding_host    = cli.embedding_host;
+    options.use_cuda_graph    = cli.use_cuda_graph;
+    if (load_progress.has_value()) { options.load_progress = std::move(load_progress.value()); }
+    return options;
+}
+
 } // namespace ninfer::cli
