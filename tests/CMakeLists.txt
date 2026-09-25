@@ -434,7 +434,12 @@ ninfer_add_test(ninfer_qwen3_8_27b_dflash2_real_test
 
 
 ninfer_add_test(ninfer_qwen3_6_35b_a3b_vision_planner_test
-  SOURCES targets/qwen3_6_35b_a3b/test_vision_planner.cpp)
+  SOURCES targets/qwen3_6_35b_a3b/test_vision_planner.cpp
+    ${PROJECT_SOURCE_DIR}/apps/cli/options.cpp
+  LIBRARIES ninfer_serve)
+target_include_directories(ninfer_qwen3_6_35b_a3b_vision_planner_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/apps
+  ${PROJECT_SOURCE_DIR}/src)
 # Experimental DFlash2 W8 partial-K qualification.
 add_executable(ninfer_linear_w8_k_slice_test
   ops/test_linear_w8_k_slice.cu
