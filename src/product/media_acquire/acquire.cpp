@@ -1,10 +1,19 @@
 #include "product/media_acquire/acquire.h"
 
+#ifdef _WIN32
+// winsock2.h must be included before any header that pulls in windows.h, so it comes
+// ahead of curl.h rather than after it.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <curl/curl.h>
 
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -26,6 +35,22 @@ namespace ninfer::product::media_acquire {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+#ifdef _WIN32
+// getaddrinfo / inet_ntop require an initialised Winsock on Windows. A file-scope guard
+// keeps the call sites unchanged and guarantees the initialisation runs before main.
+struct WinsockGuard {
+    WinsockGuard() {
+        WSADATA data{};
+        (void)::WSAStartup(MAKEWORD(2, 2), &data);
+    }
+    ~WinsockGuard() { ::WSACleanup(); }
+    WinsockGuard(const WinsockGuard&)            = delete;
+    WinsockGuard& operator=(const WinsockGuard&) = delete;
+};
+
+const WinsockGuard kWinsockGuard{};
+#endif
 
 void check_control(const Policy& policy) {
     if (policy.is_cancelled && policy.is_cancelled()) {
@@ -287,7 +312,11 @@ std::vector<std::uint8_t> read_path(const Source& source, const Policy& policy) 
     if (!policy.media_root.empty()) {
         const std::filesystem::path root = std::filesystem::weakly_canonical(policy.media_root, ec);
         const auto relative              = std::filesystem::relative(path, root, ec);
-        if (ec || relative.empty() || relative.native().starts_with("..")) {
+        // path::native() is std::wstring on Windows and std::string elsewhere, so the
+        // ".." probe has to be spelled in the native character type; a narrow literal
+        // has no matching std::wstring::starts_with overload (MSVC C2665).
+        const std::filesystem::path parent_marker = "..";
+        if (ec || relative.empty() || relative.native().starts_with(parent_marker.native())) {
             throw std::invalid_argument("media path is outside configured media root");
         }
     }

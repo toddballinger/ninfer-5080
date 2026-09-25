@@ -38,7 +38,13 @@ std::string format_console_log_prefix(std::chrono::system_clock::time_point time
     const std::time_t wall_seconds =
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::time_point(whole_seconds));
     std::tm local{};
-    localtime_r(&wall_seconds, &local);
+    // localtime_r is POSIX; MSVC only offers localtime_s, and with the argument order
+    // swapped. Both return failure rather than throwing.
+#if defined(_WIN32)
+    if (localtime_s(&local, &wall_seconds) != 0) { local = std::tm{}; }
+#else
+    if (localtime_r(&wall_seconds, &local) == nullptr) { local = std::tm{}; }
+#endif
 
     std::ostringstream out;
     out << '[' << std::put_time(&local, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0')
