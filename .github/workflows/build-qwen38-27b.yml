@@ -1,0 +1,277 @@
+name: Build and publish Qwen3.8-27B NInfer artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Artifact profile to build
+        required: true
+        default: groupwise-int
+        type: choice
+        options:
+          - groupwise-int
+          - nvfp4
+      hf_repo:
+        description: Required Hugging Face model repository, for example username/repository
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qwen38-27b-ninfer-conversion
+  cancel-in-progress: false
+
+env:
+  # Conversion is CPU-only (no GPU on the hosted runner). Validated local path:
+  # pure PyTorch + numpy, ~12 min for the full 27B on 12 CPU cores.
+  # High-performance Xet transfer (hf_transfer is deprecated in hf>=1.30)
+  HF_XET_HIGH_PERFORMANCE: "1"
+  PYTHONUNBUFFERED: "1"
+  BASE_MODEL: Qwen/Qwen3.8-27B
+  BASE_REVISION: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+  DFLASH_MODEL: z-lab/Qwen3.8-27B-DFlash2
+  DFLASH_REVISION: 50307d4c4cde6860d4eee73e2547cd786fe8e8a4
+  NVFP4_MODEL: unsloth/Qwen3.8-27B-NVFP4
+  NVFP4_REVISION: 60e813d4dbbdc5d64cf3f5a8caf2897bedf03679
+
+jobs:
+  build-and-publish:
+    # GitHub-hosted CPU runner. Public repo -> ubuntu-latest = 4 CPU / 16 GB RAM /
+    # ~90 GB free disk. Standard runners carry no GPU; the convert tool is pure
+    # PyTorch/numpy and runs fine on CPU (--device cpu, see tools/convert/.../quantize.py).
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+    env:
+      # /tmp on hosted runners sits on the same ~90 GB root disk as the
+      # work/temp dirs; avoid the runner context (not valid in job-level env).
+      HF_HOME: /tmp/hf-cache
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free disk space (drop preinstalled toolchains)
+        # Standard ubuntu-latest runners come with ~40 GB of preinstalled
+        # toolchains (dotnet, ghc, hosted tools) that we do not use. Removing
+        # them gives headroom for the ~52 GB base checkpoint + ~23 GB NVFP4
+        # checkpoint + ~16 GB output on the nvfp4 profile, which would
+        # otherwise exceed the ~90 GB free budget.
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Report machine resources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          nproc
+          python3 --version
+          df -h
+          free -h
+
+      - name: Create Python environment (CPU torch)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m venv "$RUNNER_TEMP/ninfer-venv"
+          "$RUNNER_TEMP/ninfer-venv/bin/python" -m pip install --upgrade pip wheel
+          "$RUNNER_TEMP/ninfer-venv/bin/pip" install \
+            torch \
+            "numpy>=1.24" \
+            "safetensors>=0.5" \
+            "huggingface_hub>=1.20.0" \
+            "hf_transfer>=0.1.9"
+
+          echo "$RUNNER_TEMP/ninfer-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Validate required Hugging Face repository input
+        env:
+          HF_REPO: ${{ inputs.hf_repo }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$HF_REPO" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "hf_repo must be explicitly provided as owner/repository" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -n "$HF_TOKEN"
+          hf auth login --token "$HF_TOKEN"
+
+      - name: Download official Qwen3.8-27B checkpoint
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/models/base"
+          # hf download resumes incomplete files on retry; the RUNNER_TEMP dir
+          # persists across steps in the same job, so a transient network error
+          # does not force a full 52 GB re-download.
+          for attempt in 1 2 3; do
+            if hf download "$BASE_MODEL" \
+              --revision "$BASE_REVISION" \
+              --local-dir "$RUNNER_TEMP/models/base" \
+              --token "$HF_TOKEN" \
+              --exclude '*.md' \
+              --exclude '.gitattributes'; then
+              echo "base download OK on attempt $attempt"
+              break
+            fi
+            echo "base download attempt $attempt failed; retrying in 20s..."
+            sleep 20
+          done
+          test -f "$RUNNER_TEMP/models/base/model.safetensors.index.json" || \
+            { echo "base checkpoint incomplete after retries" >&2; exit 1; }
+
+      - name: Download DFlash2 checkpoint
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/models/dflash2"
+          for attempt in 1 2 3; do
+            if hf download "$DFLASH_MODEL" \
+              --revision "$DFLASH_REVISION" \
+              --local-dir "$RUNNER_TEMP/models/dflash2" \
+              --token "$HF_TOKEN" \
+              --exclude '*.md' \
+              --exclude '.gitattributes'; then
+              echo "dflash2 download OK on attempt $attempt"
+              break
+            fi
+            echo "dflash2 download attempt $attempt failed; retrying in 20s..."
+            sleep 20
+          done
+          test -f "$RUNNER_TEMP/models/dflash2/model.safetensors" || \
+            { echo "dflash2 checkpoint incomplete after retries" >&2; exit 1; }
+
+      - name: Download NVFP4 checkpoint
+        if: ${{ inputs.profile == 'nvfp4' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/models/nvfp4"
+          for attempt in 1 2 3; do
+            if hf download "$NVFP4_MODEL" \
+              --revision "$NVFP4_REVISION" \
+              --local-dir "$RUNNER_TEMP/models/nvfp4" \
+              --token "$HF_TOKEN" \
+              --exclude '*.md' \
+              --exclude '.gitattributes'; then
+              echo "nvfp4 download OK on attempt $attempt"
+              break
+            fi
+            echo "nvfp4 download attempt $attempt failed; retrying in 20s..."
+            sleep 20
+          done
+          test -f "$RUNNER_TEMP/models/nvfp4/model.safetensors" || \
+            { echo "nvfp4 checkpoint incomplete after retries" >&2; exit 1; }
+
+      - name: Convert groupwise-int artifact
+        if: ${{ inputs.profile == 'groupwise-int' }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          # Low-memory converter: the 248320x5120 token_embedding/output_head
+          # matrices are quantized in row chunks, cutting peak RAM from ~26 GB
+          # to ~6 GB so the 15 GB standard ubuntu-latest runner can handle it.
+          # Output is byte-identical to the canonical converter (chunked planes
+          # stitch to the same SHA).
+          python -m tools.convert.qwen3_8_27b.convert_lowmem \
+            --model "$RUNNER_TEMP/models/base" \
+            --dflash2-model "$RUNNER_TEMP/models/dflash2" \
+            --out out/qwen3_8_27b.ninfer \
+            --device cpu \
+            --chunk-rows 16384 \
+            --chunk-threshold-elems 300000000
+
+      - name: Convert NVFP4 artifact
+        if: ${{ inputs.profile == 'nvfp4' }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          python -m tools.convert.qwen3_8_27b.convert_nvfp4 \
+            --model "$RUNNER_TEMP/models/base" \
+            --quantized-model "$RUNNER_TEMP/models/nvfp4" \
+            --dflash2-model "$RUNNER_TEMP/models/dflash2" \
+            --out out/qwen3_8_27b_nvfp4.ninfer \
+            --device cpu
+
+      - name: Validate final artifact
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [[ "${{ inputs.profile }}" == "groupwise-int" ]]; then
+            artifact=out/qwen3_8_27b.ninfer
+          else
+            artifact=out/qwen3_8_27b_nvfp4.ninfer
+          fi
+          test -s "$artifact"
+          python -m tools.artifact.inspect "$artifact" --objects
+          stat -c 'artifact_bytes=%s' "$artifact"
+
+      - name: Upload only the final artifact and replace the previous file
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ inputs.hf_repo }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # huggingface_hub >= 1.20.0 streams 16 GB Xet uploads through a
+          # resumable, self-batching pipeline (PR #4331): it commits in
+          # adaptive batches under the Hub's 60s commit timeout, retries on
+          # 5xx/timeouts with backoff, and dedups already-uploaded chunks.
+          # Do NOT set HF_HUB_DISABLE_XET here - that forces the legacy
+          # single-commit path that times out on big files (hub issue #2612).
+          if [[ "${{ inputs.profile }}" == "groupwise-int" ]]; then
+            artifact=out/qwen3_8_27b.ninfer
+          else
+            artifact=out/qwen3_8_27b_nvfp4.ninfer
+          fi
+
+          # Same path on every run. Retry a few times; Xet dedups so a retry
+          # after a mid-upload failure transfers ~0 new bytes.
+          for attempt in 1 2 3 4 5; do
+            if hf upload "$HF_REPO" "$artifact" "$(basename "$artifact")" \
+              --repo-type model \
+              --token "$HF_TOKEN" \
+              --commit-message "build: replace ${artifact##*/} (attempt $attempt)"; then
+              echo "upload succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "upload attempt $attempt failed; retrying in 30s..."
+            sleep 30
+          done
+          echo "all upload attempts failed" >&2
+          exit 1
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Qwen3.8-27B NInfer build"
+            echo
+            echo "- Profile: \`${{ inputs.profile }}\`"
+            echo "- Hugging Face repository: \`${{ inputs.hf_repo }}\`"
+            echo "- Only the final .ninfer artifact is uploaded."
+            echo "- Existing file at the same path is replaced."
+          } >> "$GITHUB_STEP_SUMMARY"
