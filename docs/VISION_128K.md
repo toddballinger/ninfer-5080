@@ -87,7 +87,15 @@ Image understanding is empirically validated. OpenWebUI multi-image history is a
 
 Video input is now empirically validated on the final 128K HostMapped Vision configuration using a deterministic chronological-color MP4 test. This validates the end-to-end video acquisition, preprocessing, Vision encode and generation path on the RTX 5080 configuration; it is not a broad video-quality benchmark.
 
-## Validation hashes
+## Current v1.4 validation hashes
+
+```text
+model SHA256:        c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
+ninfer SHA256:       38affd44afede11682500cba846d8a8b5c93cfe70259c73a72c1d5e3cef163bf
+ninfer-serve SHA256: b936e179a06ad6b78b4fa4b3ae683efea928abf1888a6e2c3813fdeea9294a44
+```
+
+## Historical Vision-source validation hashes
 
 ```text
 model SHA256:        c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
