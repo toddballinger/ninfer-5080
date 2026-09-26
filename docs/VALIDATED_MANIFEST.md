@@ -246,7 +246,7 @@ QUANTIZED_MATRIX_WEIGHTED_BPW=3.941
 
 Public shorthand: **~3.95 BPW effective main-model quantization**.
 
-## Common true-128K runtime
+## Historical pre-v1.4 common true-128K runtime
 
 ```text
 MAX_CONTEXT=131072
@@ -259,7 +259,7 @@ CUDA_GRAPHS=off
 MAX_CONCURRENCY=1
 ```
 
-## Recommended Vision profile
+## Historical pre-v1.4 recommended Vision profile
 
 ```text
 VISION=on
@@ -269,7 +269,7 @@ FREE_AFTER_STARTUP=26.56_MiB
 PLANNED_SLACK=28.88_MiB
 ```
 
-Maximum validated Vision profile:
+Historical maximum Vision profile:
 
 ```text
 VISION_MAX_TOKENS=2048
