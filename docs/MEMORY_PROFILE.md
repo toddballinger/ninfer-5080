@@ -39,7 +39,7 @@ planned slack** with embeddings device-resident and CUDA Graph disabled. Those o
 below are retained as historical evidence, not the current recommendation.
 
 
-The true-128K result is a near-capacity fit on a 16 GB RTX 5080. Vision is now part of the recommended configuration, so both text and Vision memory lifetimes matter.
+Historically, true 128K + Vision was a near-capacity fit on a 16 GB RTX 5080. v1.4 host-mapped embeddings materially change that envelope; the sections below preserve the earlier memory-engineering path and measurements.
 
 ## Text-model quantization
 
