@@ -54,23 +54,5 @@ struct Options {
 [[nodiscard]] EngineOptions engine_options_from_cli(
     const Options& cli, std::optional<LoadProgress> load_progress = std::nullopt);
 
-// Merged Vision budget sizing, matching the production qwen3_6 runtime rule
-// (resolved_vision_token_limit): the merged Vision token budget is the plan
-// capacity clamped to the 32768 frontend merged limit, then further clamped to
-// the explicit --vision-max-tokens value when one is set (0 => automatic). This
-// merged value is exactly what drives the Vision workspace capacity and the
-// Vision forward/transient capacity the engine consumes at startup, so
-// exercising it here keeps the CLI's Vision sizing testable on CPU without
-// re-implementing the planner formula in the test itself.
-[[nodiscard]] inline std::uint32_t vision_merged_budget(std::uint32_t capacity,
-                                                 std::uint32_t vision_max_tokens) {
-    std::uint32_t merged =
-        std::min(capacity, std::uint32_t{32768}); // 32768 = kFrontendMergedLimit
-    if (vision_max_tokens != 0) {
-        merged = std::min(merged, vision_max_tokens);
-    }
-    return merged;
-}
-
 
 } // namespace ninfer::cli
