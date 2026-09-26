@@ -1,5 +1,44 @@
 # Memory Profile
 
+
+## Current v1.4 production memory envelope
+
+v1.4 changes the RTX 5080 memory picture materially. The token embedding table is now host-mapped
+with `--embedding-host`, recovering about **796 MiB** of persistent VRAM. That headroom makes the
+full Vision-2048 profile comfortable enough to enable CUDA Graph decode.
+
+Validated production profile:
+
+```text
+MAX_CONTEXT=131072
+KV_CAPACITY=131072
+KV_DTYPE=q4-group64
+PREFILL_CHUNK=896
+MTP_DRAFT_TOKENS=3
+VISION_MAX_TOKENS=2048
+EMBEDDING_HOST=on
+CUDA_GRAPHS=on
+```
+
+Measured startup envelope:
+
+```text
+embedding host-resident  795.70 MiB
+process VRAM             15028 MiB
+text_prefill             116.0127 MiB
+mtp_prefill              116.0127 MiB
+vision_encode            132.3142 MiB
+free after startup       794.56 MiB
+planned slack            715.54 MiB
+graph observed             2.00 MiB
+graph allowance           82.00 MiB
+```
+
+For comparison, the validated pre-v1.4 Vision-2048 profile had only **8.56 MiB free / 10.08 MiB
+planned slack** with embeddings device-resident and CUDA Graph disabled. Those older measurements
+below are retained as historical evidence, not the current recommendation.
+
+
 The true-128K result is a near-capacity fit on a 16 GB RTX 5080. Vision is now part of the recommended configuration, so both text and Vision memory lifetimes matter.
 
 ## Text-model quantization
@@ -92,7 +131,7 @@ vision-max-tokens 2048 -> vision_encode 132.3142 MiB
 
 At 1024, Vision workspace remains below the 116 MiB text-prefill peak. At 1792, Vision and text-prefill workspace are effectively the same size. At 2048, Vision becomes the workspace peak.
 
-### Recommended validated profile: 1792
+### Historical headroom profile: 1792
 
 At `--vision-max-tokens 1792`:
 
@@ -107,7 +146,7 @@ planned slack        28.88 MiB
 
 This profile retains substantially more startup margin than 2048 while keeping the full `131072 / 131072` context/KV allocation. Deterministic image and video requests both passed at this setting.
 
-### Maximum validated profile: 2048
+### Historical pre-v1.4 Vision-2048 profile
 
 At `--vision-max-tokens 2048`:
 
@@ -120,7 +159,7 @@ free after startup    8.56 MiB
 planned slack        10.08 MiB
 ```
 
-This is a valid but extremely tight fit. A clean GPU is required.
+This was a valid but extremely tight pre-v1.4 fit. v1.4 host-mapped embeddings replace this as the current production memory envelope.
 
 ## Cached historical media
 
