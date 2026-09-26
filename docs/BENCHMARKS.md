@@ -101,7 +101,7 @@ The Vision source is about 0.19% lower in prefill and effectively identical in d
 
 ## Historical Vision 1792 serving profile
 
-The recommended Vision profile is empirically validated with the full `131072 / 131072` text context/KV allocation and:
+This historical Vision-1792 profile was empirically validated with the full `131072 / 131072` text context/KV allocation and:
 
 ```text
 --prefill-chunk 896
