@@ -2,6 +2,74 @@
 
 This file records immutable and subsequently validated milestones by exact commit, binary and artifact identity. Validation claims are attached to the source tree that was actually tested rather than to a floating branch label.
 
+
+## Current production release — v1.4
+
+```text
+release tag: qwen3.8-27b-rtx5080-128k-vision-v1.4
+release commit: d5ee1bf130a45ce56f645dd44a6f1fa6f30c6a77
+source tree: 35ef1538def9d4bd9dc0294c9364897cf1f4bce5
+model SHA256: c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
+ninfer SHA256: 38affd44afede11682500cba846d8a8b5c93cfe70259c73a72c1d5e3cef163bf
+ninfer-serve SHA256: b936e179a06ad6b78b4fa4b3ae683efea928abf1888a6e2c3813fdeea9294a44
+```
+
+Validated production runtime:
+
+```text
+MAX_CONTEXT=131072
+KV_CAPACITY=131072
+PREFILL_CHUNK=896
+KV_DTYPE=q4-group64
+SPECULATION=mtp
+DRAFT_TOKENS=3
+EMBEDDING_HOST=on
+CUDA_GRAPHS=on
+VISION=on
+VISION_MAX_TOKENS=2048
+MAX_CONCURRENCY=1
+DEFAULT_THINKING_BUDGET=2048
+PREFIX_CHECKPOINT_POLICY=rolling-tool
+```
+
+Canonical v1.4 mixed-workflow qualification:
+
+```text
+FIXTURE=bench/fixtures/workflow-118k-v1/qwen38_118001_workflow_candidate.txt
+FIXTURE_SHA256=cb7c131bd20d78bd69396c019f988c81fad1941a853a8de7da7586e1aeb99718
+PROMPT_TOKENS=118001
+GRAPH_ON_PREFILL_MEDIAN_TOK_S=1361.76
+GRAPH_ON_DECODE_MEDIAN_TOK_S=96.97
+GRAPH_ON_DECODE_MEAN_TOK_S=97.01
+GRAPH_ON_DECODE_RANGE_TOK_S=96.97-97.08
+GRAPH_ON_MTP_ACCEPTANCE_RATE=66.98%
+GRAPH_ON_MTP_ACCEPTANCE_LENGTH=3.01
+GRAPH_ON_TOTAL_DECODED_TOKENS=6144
+GRAPH_OFF_DECODE_MEDIAN_TOK_S=95.09
+GRAPH_ON_VS_OFF_DECODE_DELTA=+1.98%
+TOTAL_GRAPH_AB_DECODED_TOKENS=12288
+RESULT=PASS
+```
+
+Sustained decode used the unchanged canonical prompt and a benchmark-only request policy with
+`request.stop.include_model_defaults = false`, matching `ninfer_bench`, so each measured run
+reached exactly 2,048 decoded tokens instead of terminating at the model-default stop.
+
+Validated v1.4 memory envelope:
+
+```text
+EMBEDDING_HOST_RESIDENT=795.70_MiB
+PROCESS_VRAM=15028_MiB
+FREE_AFTER_STARTUP_GRAPH_ON=794.56_MiB
+PLANNED_SLACK_GRAPH_ON=715.54_MiB
+GRAPH_OBSERVED=2.00_MiB
+GRAPH_ALLOWANCE=82.00_MiB
+VISION_ENCODE_WORKSPACE=132.3142_MiB
+```
+
+The older 118,001-token repetitive fixture remains a historical regression record only. The
+canonical forward-looking benchmark is `workflow-118k-v1`.
+
 ## Vision source milestone — `7c10db07`
 
 ```text
