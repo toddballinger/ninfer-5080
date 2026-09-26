@@ -6,12 +6,13 @@ Start with the [project README](../README.md) for the validated RTX 5080 profile
 
 | Document | Purpose |
 |---|---|
-| [Qwen3.8-27B RTX 5080 v1.3 release](RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) | validated v1.3 production runtime, thinking-budget and rolling-tool checkpoint behavior |
+| [Qwen3.8-27B RTX 5080 v1.4 release](RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) | current production release: host-mapped embeddings, CUDA Graph, realistic 118K benchmark and Vision-2048 headroom |
+| [Qwen3.8-27B RTX 5080 v1.3 release](RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) | historical v1.3 production runtime, thinking-budget and rolling-tool checkpoint behavior |
 | [Validated manifest](VALIDATED_MANIFEST.md) | immutable model/binary identities and commit-scoped qualification records |
-| [True 128K + Vision on RTX 5080](VISION_128K.md) | 1792/2048 Vision profiles, memory envelope and multimodal validation |
+| [True 128K + Vision on RTX 5080](VISION_128K.md) | current v1.4 Vision-2048 production profile plus historical 1792/2048 memory validation |
 | [Reproducibility](REPRODUCIBILITY.md) | exact model revisions, build path, hashes and runtime settings |
-| [Benchmarks](BENCHMARKS.md) | long-context, multimodal and runtime comparison results |
-| [Memory profile](MEMORY_PROFILE.md) | mixed quantization, workspace recovery and HostMapped Vision fit |
+| [Benchmarks](BENCHMARKS.md) | canonical workflow-118k-v1 results, CUDA Graph A/B, historical long-context and multimodal results |
+| [Memory profile](MEMORY_PROFILE.md) | v1.4 host-mapped embedding headroom, CUDA Graph allowance, mixed quantization and Vision fit |
 | [Upstream sync status](UPSTREAM_SYNC_STATUS.md) | selective semantic-port ledger, production-relevance policy and pending upstream work |
 | [Technical deep dive](TECHNICAL_DEEP_DIVE.md) | architecture and optimization details |
 | [Failures and lessons](FAILURES_AND_LESSONS.md) | dead ends, regressions and recovery work |

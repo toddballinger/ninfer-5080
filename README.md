@@ -41,37 +41,51 @@ Expected:
 c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
 ```
 
-The same artifact SHA has been retained across the original text-only release, Vision enablement, the v1.2/v1.3 production runtime work, and subsequent qualified runtime optimizations.
+The same artifact SHA has been retained across the original text-only release, Vision enablement, the v1.2/v1.3 production runtime work, the v1.4 production release, and subsequent qualified runtime optimizations.
 
 ## Validated runtime releases
 
-### v1.3 production runtime
+### v1.4 production runtime
 
-The current production release record is **v1.3**, validated at:
+The current production release is **v1.4**, published from:
 
 ```text
 source commit:
-ceb32f7d002edab224a83a2e2609f45fca4f8919
+d5ee1bf130a45ce56f645dd44a6f1fa6f30c6a77
+
+source tree:
+35ef1538def9d4bd9dc0294c9364897cf1f4bce5
+
+ninfer SHA-256:
+38affd44afede11682500cba846d8a8b5c93cfe70259c73a72c1d5e3cef163bf
 
 ninfer-serve SHA-256:
-3179bfbcb88a72c04b983f28c25c62db468fbc8ef267fe043899de30a4281c56
+b936e179a06ad6b78b4fa4b3ae683efea928abf1888a6e2c3813fdeea9294a44
 ```
 
-v1.3 preserves the full 128K/Q4-KV/MTP-3/Vision profile and adds corrected Q4 strided-output handling, a server-wide default thinking budget, and rolling tool checkpoints for agent/tool-loop workloads.
+v1.4 preserves the full **131,072 context / 131,072 Q4 KV / MTP-3 / Vision-2048** profile and adds host-mapped token embeddings, enough recovered VRAM to run CUDA Graph decode as the recommended profile, constrained semantic decisions, a realistic mixed-workflow 118K benchmark, and CLI/serve Vision-planning parity.
 
-See [the full v1.3 release record](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md).
+The validated RTX 5080 production profile keeps **795.70 MiB** of token embeddings host-resident and starts with **715.54 MiB planned slack** with CUDA Graph enabled.
 
-### Later qualified runtime work
+Canonical v1.4 benchmark on the 118,001-token mixed workflow:
 
-Runtime development continues after v1.3. For example, the Q5 A16 LinearAdd semantic port at `00e8e47f` was re-qualified with the exact 118,001-token workload while continuing to use the same canonical model SHA.
+| Metric | Result |
+|---|---:|
+| Prefill median | **1,361.76 tok/s** |
+| Sustained decode median | **96.97 tok/s** |
+| Sustained decode mean | **97.01 tok/s** |
+| MTP acceptance | **66.98%** |
+| MTP accepted length | **3.01 tok/round** |
 
-The repository therefore treats **runtime source identity** and **model artifact identity** separately. See [VALIDATED_MANIFEST.md](docs/VALIDATED_MANIFEST.md) for the exact commit-scoped qualification ledger.
+The decode result is based on 3 × 2,048 exact decoded tokens with model-default EOS suppressed only for benchmark measurement, matching the repository benchmark policy.
 
-## Recommended serving profiles
+See [the full v1.4 release record](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.4.md).
 
-### Recommended headroom profile — Vision 1792
+Historical release records remain preserved in [v1.3](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) and [v1.2](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.2.md).
 
-For the most comfortable 16 GB memory margin, use:
+## Recommended serving profile
+
+The v1.4 RTX 5080 production profile uses full 128K context/KV, Vision 2048, host-mapped embeddings, MTP-3 and CUDA Graph decode:
 
 ```bash
 ./build/apps/ninfer-serve /path/to/qwen3_8_27b.ninfer \
@@ -84,39 +98,41 @@ For the most comfortable 16 GB memory margin, use:
   --kv-dtype q4 \
   --spec mtp \
   --draft-tokens 3 \
-  --no-cuda-graph \
+  --embedding-host \
   --max-concurrency 1 \
   --default-thinking-budget 2048 \
   --prefix-checkpoint-policy rolling-tool \
   --vision \
-  --vision-max-tokens 1792
+  --vision-max-tokens 2048
 ```
 
-Measured startup envelope:
+CUDA Graph is enabled by default; the recommended v1.4 profile intentionally omits `--no-cuda-graph`.
+
+Validated startup envelope:
 
 ```text
-vision_encode       115.7751 MiB
-free after startup   26.56 MiB
-planned slack        28.88 MiB
+embedding host-resident  795.70 MiB
+vision_encode             132.3142 MiB
+free after startup        794.56 MiB
+planned slack             715.54 MiB
+graph observed/allowance    2.00 / 82.00 MiB
 ```
 
-### Maximum validated profile — Vision 2048
-
-Vision 2048 is also validated and is the profile used by the v1.3 production OpenClaw deployment, but the remaining GPU margin is much tighter:
-
-```text
-vision_encode      132.3142 MiB
-free after startup   8.56 MiB
-planned slack       10.08 MiB
-```
-
-Use a clean GPU for both profiles, especially 2048. See [VISION_128K.md](docs/VISION_128K.md) for the complete memory and multimodal validation record.
+This replaces the pre-v1.4 recommendation to reduce Vision to 1792 for headroom. The 1792 and earlier 2048 measurements remain documented as historical validation points in [VISION_128K.md](docs/VISION_128K.md).
 
 ## Long-context validation
 
-The project uses an exact historical **118,001-token** workload to prevent “128K” claims from being based only on a configured maximum.
+The canonical forward-looking benchmark is now the deterministic **workflow-118k-v1** mixed engineering-agent fixture:
 
-A feature-complete mainline runtime at `b44b1958` produced:
+```text
+bench/fixtures/workflow-118k-v1/qwen38_118001_workflow_candidate.txt
+SHA256=cb7c131bd20d78bd69396c019f988c81fad1941a853a8de7da7586e1aeb99718
+prepared tokens=118001
+```
+
+The fixture mixes prose, source code, shell transcripts, configuration, JSON, tool-call history, runtime logs and engineering discussion. The older repetitive 118K corpus is retained only as historical evidence.
+
+v1.4 canonical Graph-ON result:
 
 | Metric | Result |
 |---|---:|
@@ -126,14 +142,17 @@ A feature-complete mainline runtime at `b44b1958` produced:
 | KV dtype | Q4 group64 |
 | Prefill chunk | 896 |
 | Speculation | MTP-3 |
-| Prefill | **1378.85 tok/s** |
-| Decode | **71.44 tok/s** |
-| MTP acceptance | **44.74%** |
-| Acceptance length | **2.31 tok/round** |
+| CUDA Graph | enabled |
+| Host-mapped embeddings | enabled |
+| Vision profile | 2048 |
+| Prefill median | **1,361.76 tok/s** |
+| Decode median | **96.97 tok/s** |
+| Decode range | **96.97–97.08 tok/s** |
+| MTP acceptance | **66.98%** |
+| Acceptance length | **3.01 tok/round** |
+| Planned slack | **715.54 MiB** |
 
-The later Q5 A16 LinearAdd semantic port at `00e8e47f` was independently qualified on the same workload at **1376.30 tok/s prefill** and **71.53 tok/s decode**, with the same model SHA and the same 44.74% MTP acceptance.
-
-A result is described here as **true 128K** only when both the configured context and allocated KV capacity are actually `131072`.
+A result is described here as **true 128K** only when both configured context and allocated KV capacity are actually `131072`.
 
 ## Multimodal validation
 
@@ -184,7 +203,8 @@ That means build automation can evolve without weakening the artifact identity c
 
 Start with:
 
-- [v1.3 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) — current production release record
+- [v1.4 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) — current production release record
+- [v1.3 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) — historical production release record
 - [Validated manifest](docs/VALIDATED_MANIFEST.md) — exact source, binary and model identities
 - [Vision 128K](docs/VISION_128K.md) — Vision profiles, memory envelope and validation
 - [Reproducibility](docs/REPRODUCIBILITY.md) — build and runtime reproduction

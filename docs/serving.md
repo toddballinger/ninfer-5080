@@ -42,6 +42,42 @@ cannot be combined with `--vision`. A later request cannot enable a capability o
 rows over PCIe ([Embedding host residency](#embedding-host-residency)); it is orthogonal to the Vision
 flags and works with every execution route, including speculative decoding.
 
+
+### RTX 5080 v1.4 production profile
+
+For the project-qualified Qwen3.8-27B RTX 5080 16 GB configuration, the recommended serving
+profile is:
+
+```bash
+./build/apps/ninfer-serve /path/to/qwen3_8_27b.ninfer \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --model-id local-model \
+  --max-context 131072 \
+  --kv-capacity 131072 \
+  --prefill-chunk 896 \
+  --kv-dtype q4 \
+  --spec mtp \
+  --draft-tokens 3 \
+  --embedding-host \
+  --max-concurrency 1 \
+  --max-pending-requests 16 \
+  --pending-timeout-ms 180000 \
+  --vision \
+  --vision-max-tokens 2048 \
+  --default-thinking-budget 2048 \
+  --prefix-checkpoint-policy rolling-tool
+```
+
+CUDA Graph is intentionally enabled by default. On the validated v1.4 RTX 5080 profile it improves
+the canonical sustained-decode benchmark from **95.09 tok/s to 96.97 tok/s median (+1.98%)** while
+retaining **715.54 MiB planned slack**. Host-mapped token embeddings account for **795.70 MiB** of
+host-resident model storage and are what make this production headroom practical.
+
+See [the v1.4 release record](RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) and
+[canonical benchmarks](BENCHMARKS.md).
+
+
 ## Endpoints
 
 | Method and path | Behavior |

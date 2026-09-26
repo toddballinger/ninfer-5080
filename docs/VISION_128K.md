@@ -6,9 +6,10 @@ Validated Vision source commit before merge to `main`:
 
 `7c10db07ac8c5803f921b83603b707750652873e`
 
-## Recommended serving command
+## Recommended v1.4 serving command
 
-The recommended profile is empirically validated at `--vision-max-tokens 1792`:
+The current RTX 5080 production recommendation is **Vision 2048 with host-mapped embeddings and
+CUDA Graph enabled**:
 
 ```bash
 ./build/apps/ninfer-serve /path/to/model.ninfer \
@@ -21,37 +22,53 @@ The recommended profile is empirically validated at `--vision-max-tokens 1792`:
   --kv-dtype q4 \
   --spec mtp \
   --draft-tokens 3 \
-  --no-cuda-graph \
+  --embedding-host \
   --max-concurrency 1 \
+  --default-thinking-budget 2048 \
+  --prefix-checkpoint-policy rolling-tool \
   --vision \
-  --vision-max-tokens 1792
+  --vision-max-tokens 2048
 ```
 
-Measured 1792 workspace/startup envelope:
+CUDA Graph is enabled by default; do not add `--no-cuda-graph` for the recommended v1.4 profile.
+
+Validated v1.4 workspace/startup envelope:
 
 ```text
-text_prefill       116.0127 MiB
-mtp_prefill        116.0127 MiB
-vision_encode      115.7751 MiB
-free after startup  26.56 MiB
-planned slack       28.88 MiB
+text_prefill             116.0127 MiB
+mtp_prefill              116.0127 MiB
+vision_encode            132.3142 MiB
+embedding host-resident  795.70 MiB
+free after startup       794.56 MiB
+planned slack            715.54 MiB
+graph observed             2.00 MiB
+graph allowance           82.00 MiB
 ```
 
-The server reached the listening state with the full `131072 / 131072` text context/KV allocation unchanged. A deterministic 512×256 synthetic image containing a red left half and blue right half was correctly described as: “The left half is red and the right half is blue.” The request reported `prompt=211`, `prefill=685.8 tok/s`, `decode=118.3 tok/s`, `ttft=719 ms`, and MTP `3.10 tok/round (70.0%)`.
+The Vision path itself remains the previously validated HostMapped Vision implementation; v1.4
+adds host residency for the token embedding table, recovering enough persistent VRAM that the
+2048-token Vision profile no longer has the pre-v1.4 ~10 MiB margin.
 
-A deterministic 6-second synthetic MP4 containing red, then green, then blue scenes was also processed successfully at the same profile. With thinking disabled and a constrained output format, the model returned exactly `red, green, blue`. The video request reported `prompt=572`, `gen=6`, `prefill=1721.9 tok/s`, `decode=97.1 tok/s`, `ttft=1111 ms`, wall time `1.16 s`, and MTP `4.00 tok/round (100.0%)`.
+### Historical pre-v1.4 profiles
 
-The maximum validated profile is `--vision-max-tokens 2048`. At 2048 the measured workspace/startup envelope was:
+Before `--embedding-host`, Vision 1792 was recommended for headroom:
 
 ```text
-text_prefill       116.0127 MiB
-mtp_prefill        116.0127 MiB
-vision_encode      132.3142 MiB
-free after startup   8.56 MiB
-planned slack       10.08 MiB
+vision_encode             115.7751 MiB
+free after startup         26.56 MiB
+planned slack              28.88 MiB
 ```
 
-A clean GPU is required for these true-128K profiles; the 2048 setting is especially tight.
+The pre-v1.4 Vision-2048 profile also passed, but was extremely tight:
+
+```text
+vision_encode             132.3142 MiB
+free after startup          8.56 MiB
+planned slack              10.08 MiB
+```
+
+Those measurements are retained for historical comparison; they are not the current production
+recommendation.
 
 ## Validation
 
@@ -70,7 +87,15 @@ Image understanding is empirically validated. OpenWebUI multi-image history is a
 
 Video input is now empirically validated on the final 128K HostMapped Vision configuration using a deterministic chronological-color MP4 test. This validates the end-to-end video acquisition, preprocessing, Vision encode and generation path on the RTX 5080 configuration; it is not a broad video-quality benchmark.
 
-## Validation hashes
+## Current v1.4 validation hashes
+
+```text
+model SHA256:        c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
+ninfer SHA256:       38affd44afede11682500cba846d8a8b5c93cfe70259c73a72c1d5e3cef163bf
+ninfer-serve SHA256: b936e179a06ad6b78b4fa4b3ae683efea928abf1888a6e2c3813fdeea9294a44
+```
+
+## Historical Vision-source validation hashes
 
 ```text
 model SHA256:        c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21

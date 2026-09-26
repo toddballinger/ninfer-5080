@@ -1,6 +1,70 @@
 # Benchmarks
 
-## Vision-source regression — `7c10db07`
+
+## Canonical v1.4 RTX 5080 benchmark — `workflow-118k-v1`
+
+The forward-looking long-context benchmark is the deterministic mixed engineering-agent workflow:
+
+```text
+fixture: bench/fixtures/workflow-118k-v1/qwen38_118001_workflow_candidate.txt
+SHA256: cb7c131bd20d78bd69396c019f988c81fad1941a853a8de7da7586e1aeb99718
+prepared prompt tokens: 118001
+```
+
+Configuration:
+
+| Item | Value |
+|---|---:|
+| GPU | RTX 5080 16 GB |
+| Max context | 131,072 |
+| KV capacity | 131,072 |
+| KV dtype | Q4 group64 |
+| Prefill chunk | 896 |
+| Speculation | MTP-3 |
+| Host-mapped embeddings | enabled |
+| Vision profile | 2048 |
+| CUDA Graph | enabled |
+
+Three exact Graph-ON long-decode runs:
+
+| Metric | Result |
+|---|---:|
+| Prefill median | **1,361.76 tok/s** |
+| Prefill range | 1,351.79–1,362.69 tok/s |
+| Decode median | **96.97 tok/s** |
+| Decode mean | **97.01 tok/s** |
+| Decode range | **96.97–97.08 tok/s** |
+| Decode standard deviation | **0.06 tok/s** |
+| MTP acceptance | **66.98%** |
+| MTP accepted length | **3.01 tok/round** |
+| Workspace peak | **116.00 MiB** |
+| Planned slack | **715.54 MiB** |
+
+Each run measured exactly 2,048 decoded tokens, for **6,144 Graph-ON decoded tokens**.
+
+### CUDA Graph A/B
+
+| Metric | Graph ON | Graph OFF | Difference |
+|---|---:|---:|---:|
+| Prefill median | 1,361.76 | 1,364.12 tok/s | -0.17% |
+| Decode median | **96.97** | 95.09 tok/s | **+1.98%** |
+| MTP acceptance | 66.98% | 66.98% | unchanged |
+| MTP accepted length | 3.01 | 3.01 tok/round | unchanged |
+| Planned slack | 715.54 | 804.08 MiB | -88.54 MiB |
+
+The complete A/B contains **12,288 decoded tokens**. CUDA Graph is therefore the recommended v1.4
+production profile.
+
+The normal model emits its default stop token after roughly 45 generated tokens on this deterministic
+fixture. For sustained throughput measurement only, the benchmark driver sets
+`request.stop.include_model_defaults = false`, the same policy used by `ninfer_bench`. The
+prompt, model artifact, sampling and inference kernels are unchanged.
+
+Older repeated-corpus results below remain historical comparison/regression data and are not the
+canonical benchmark moving forward.
+
+
+## Historical Vision-source regression — `7c10db07`
 
 The Vision-enabled source was regression-tested with the exact historical 118,001-token workload while keeping the full 131,072-token maximum context and KV capacity allocated.
 
@@ -35,9 +99,9 @@ Validated Vision source commit before merge to `main`:
 
 The Vision source is about 0.19% lower in prefill and effectively identical in decode/MTP behavior. This is within normal run-to-run variation; no meaningful text-path regression was observed.
 
-## Recommended Vision 1792 serving profile
+## Historical Vision 1792 serving profile
 
-The recommended Vision profile is empirically validated with the full `131072 / 131072` text context/KV allocation and:
+This historical Vision-1792 profile was empirically validated with the full `131072 / 131072` text context/KV allocation and:
 
 ```text
 --prefill-chunk 896
