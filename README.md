@@ -203,7 +203,8 @@ That means build automation can evolve without weakening the artifact identity c
 
 Start with:
 
-- [v1.4 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) — current production release record\n- [v1.3 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) — historical production release record
+- [v1.4 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) — current production release record
+- [v1.3 release](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.3.md) — historical production release record
 - [Validated manifest](docs/VALIDATED_MANIFEST.md) — exact source, binary and model identities
 - [Vision 128K](docs/VISION_128K.md) — Vision profiles, memory envelope and validation
 - [Reproducibility](docs/REPRODUCIBILITY.md) — build and runtime reproduction
