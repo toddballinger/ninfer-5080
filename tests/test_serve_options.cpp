@@ -140,6 +140,35 @@ int main() {
     } catch (const std::invalid_argument&) { dflash_vision_rejected = true; }
     failures += check(dflash_vision_rejected, "DFlash and Vision were accepted together");
 
+    // --vision-max-tokens parity: the same flag the standalone CLI now exposes must behave
+    // identically in the serve parser (parse, bounds, help text).
+    failures +=
+        check(defaults.vision_max_tokens == 0, "omitted --vision-max-tokens is not 0 by default");
+    const ServeOptions vision_capped =
+        parse({"ninfer-serve", "model.ninfer", "--vision", "--vision-max-tokens", "1024"});
+    failures += check(vision_capped.enable_vision,
+                      "--vision did not reach serving options in the Vision cap case");
+    failures += check(vision_capped.vision_max_tokens == 1024,
+                      "serve --vision-max-tokens did not record its value");
+    const ServeOptions vision_auto =
+        parse({"ninfer-serve", "model.ninfer", "--vision", "--vision-max-tokens", "0"});
+    failures +=
+        check(vision_auto.vision_max_tokens == 0,
+              "an explicit 0 serve Vision cap must preserve the automatic budget");
+    const ServeOptions vision_boundary =
+        parse({"ninfer-serve", "model.ninfer", "--vision-max-tokens", "32768"});
+    failures += check(vision_boundary.vision_max_tokens == 32768,
+                      "the 32768 Vision cap was rejected at its upper bound");
+    bool serve_bad_value_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--vision-max-tokens", "abc"});
+    } catch (const std::invalid_argument&) { serve_bad_value_rejected = true; }
+    failures += check(serve_bad_value_rejected,
+                      "a non-numeric --vision-max-tokens value was accepted");
+    failures += check(
+        serve_usage_text("ninfer-serve").find("--vision-max-tokens") != std::string::npos,
+        "serve help omits --vision-max-tokens");
+
     bool implicit_backend_rejected = false;
     try {
         (void)parse({"ninfer-serve", "model.ninfer", "--draft-tokens", "3"});

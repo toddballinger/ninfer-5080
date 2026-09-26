@@ -2,6 +2,7 @@
 
 #include "ninfer/types.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -26,6 +27,7 @@ struct Options {
     KvCacheStorage kv_cache = KvCacheStorage::BFloat16;
     SpeculativeOptions speculative;
     bool enable_vision  = false;
+    std::uint32_t vision_max_tokens = 0; // 0 => automatic Vision budget
     bool embedding_host = false;
     bool use_cuda_graph = true;
 
@@ -44,5 +46,13 @@ struct Options {
 
 [[nodiscard]] Options parse_options(int argc, char** argv);
 [[nodiscard]] std::string usage_text(const char* argv0);
+
+// Build the standalone-CLI EngineOptions from a parsed CLI Options value, applying the
+// exact handoff used by apps/cli/main.cpp. The load-progress callback is the single
+// production field that cannot be derived from the CLI; callers without a renderer
+// (e.g. tests) pass std::nullopt to leave load_progress at its default.
+[[nodiscard]] EngineOptions engine_options_from_cli(
+    const Options& cli, std::optional<LoadProgress> load_progress = std::nullopt);
+
 
 } // namespace ninfer::cli

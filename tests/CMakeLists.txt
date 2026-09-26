@@ -227,6 +227,18 @@ ninfer_add_test(ninfer_anthropic_schema_test
 ninfer_add_test(ninfer_tool_call_parser_test
   SOURCES test_tool_call_parser.cpp
   LIBRARIES ninfer_serve)
+ninfer_add_test(ninfer_cli_options_test
+  SOURCES test_cli_options.cpp
+    ${PROJECT_SOURCE_DIR}/apps/cli/options.cpp
+  LIBRARIES ninfer_core)
+target_include_directories(ninfer_cli_options_test PRIVATE ${PROJECT_SOURCE_DIR}/apps)
+target_include_directories(ninfer_cli_options_test PRIVATE ${PROJECT_SOURCE_DIR}/src/product)
+ninfer_add_test(ninfer_cli_vision_help_test
+  SOURCES test_cli_vision_help.cpp
+    ${PROJECT_SOURCE_DIR}/apps/cli/options.cpp
+  LIBRARIES ninfer_core)
+target_include_directories(ninfer_cli_vision_help_test PRIVATE ${PROJECT_SOURCE_DIR}/apps)
+target_include_directories(ninfer_cli_vision_help_test PRIVATE ${PROJECT_SOURCE_DIR}/src/product)
 ninfer_add_test(ninfer_serve_options_test
   SOURCES test_serve_options.cpp
   LIBRARIES ninfer_serve)
@@ -421,6 +433,17 @@ ninfer_add_test(ninfer_qwen3_8_27b_dflash2_real_test
   LIBRARIES ninfer_engine)
 
 
+ninfer_add_test(ninfer_qwen3_6_35b_a3b_vision_planner_test
+  SOURCES targets/qwen3_6_35b_a3b/test_vision_planner.cpp
+    ${PROJECT_SOURCE_DIR}/apps/cli/options.cpp
+  LIBRARIES ninfer_serve ninfer_engine)
+target_include_directories(ninfer_qwen3_6_35b_a3b_vision_planner_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/apps
+  ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/impl
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
+target_link_libraries(ninfer_qwen3_6_35b_a3b_vision_planner_test PRIVATE CUDA::cudart)
 # Experimental DFlash2 W8 partial-K qualification.
 add_executable(ninfer_linear_w8_k_slice_test
   ops/test_linear_w8_k_slice.cu
