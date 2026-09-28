@@ -896,7 +896,14 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
         // each reachable node-topology class. These bounds cover the largest profile installed in
         // each class and the driver/module state materialized while qualifying all definitions.
         if (impl->speculative_backend == SpeculativeBackend::None) {
-            impl->graph_allowance_bytes = checked_mul(12ULL * kMiB, impl->max_concurrency,
+            // 48 MiB, not 12. The original figure under-estimated the graph driving state on
+            // this machine by 2.7x: with --max-context 2048 the preparation step consumed
+            // 33,423,360 B (31.9 MiB) against a 12 MiB allowance, which aborted startup with
+            // "CUDA Graph preparation consumed ... exceeding the planned allowance".
+            // Re-measure with the --log-stats-interval-ms summary if the graph topology
+            // changes; the observed figure is reported as "CUDA Graph memory <observed> /
+            // <allowance>".
+            impl->graph_allowance_bytes = checked_mul(48ULL * kMiB, impl->max_concurrency,
                                                       "ordinary exact-b graph allowance");
         } else if (impl->speculative_backend == SpeculativeBackend::Mtp) {
             const auto profiles = mtp_graph_profiles(impl->capacity, impl->draft_window);
@@ -906,7 +913,14 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
                     const std::uint64_t final_visible = std::min<std::uint64_t>(
                         impl->capacity,
                         static_cast<std::uint64_t>(profile.max) + 2ULL * impl->draft_window);
-                    return (final_visible <= 4096 ? 12ULL : 82ULL) * kMiB;
+                    // 48/256 MiB, not 12/82. The allowance does not scale with context length
+                    // while the graph preparation cost does: measured 31.9 MiB at 2048 context
+                    // and 191,819,776 B (182.9 MiB) at 65536 context, the latter against the
+                    // 82 MiB branch and aborting startup. Raised so graph mode survives the
+                    // contexts this device can actually hold. Note the side effect: the
+                    // allowance is subtracted during capacity planning, so a larger figure
+                    // leaves slightly less room for --kv-capacity auto.
+                    return (final_visible <= 4096 ? 48ULL : 256ULL) * kMiB;
                 },
                 "MTP graph allowance");
             impl->graph_allowance_bytes = checked_mul(per_batch_allowance, impl->max_concurrency,

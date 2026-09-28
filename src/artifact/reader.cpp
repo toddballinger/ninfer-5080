@@ -15,10 +15,20 @@
 #include <unordered_map>
 #include <utility>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace ninfer::artifact {
 namespace {
@@ -182,6 +192,138 @@ struct TransparentStringHash {
 class MappedFile {
 public:
     explicit MappedFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+        open_windows(path);
+#else
+        open_posix(path);
+#endif
+    }
+
+    ~MappedFile() {
+#ifdef _WIN32
+        if (data_ != nullptr) { ::UnmapViewOfFile(data_); }
+        if (mapping_ != nullptr) { ::CloseHandle(mapping_); }
+        if (file_ != INVALID_HANDLE_VALUE) { ::CloseHandle(file_); }
+#else
+        if (data_ != nullptr) { ::munmap(const_cast<std::byte*>(data_), size_); }
+        if (fd_ >= 0) { ::close(fd_); }
+#endif
+    }
+
+    MappedFile(const MappedFile&)            = delete;
+    MappedFile& operator=(const MappedFile&) = delete;
+
+    const std::byte* data() const noexcept { return data_; }
+
+    std::size_t size() const noexcept { return size_; }
+
+    std::size_t read_direct(std::uint64_t absolute_offset, std::span<std::byte> destination) const {
+        constexpr std::size_t alignment = Reader::direct_io_alignment;
+        if (absolute_offset % alignment != 0 || destination.size() % alignment != 0 ||
+            reinterpret_cast<std::uintptr_t>(destination.data()) % alignment != 0) {
+            throw ArtifactError("direct artifact read is not 4096-byte aligned");
+        }
+#ifdef _WIN32
+        if (absolute_offset > static_cast<std::uint64_t>(std::numeric_limits<LONGLONG>::max()) ||
+            destination.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
+            throw ArtifactError("direct artifact read exceeds platform I/O limits");
+        }
+
+        // Verified against Windows: ReadFile honours OVERLAPPED.Offset even when the handle
+        // was opened synchronously, so this is a true positioned read with no shared file
+        // pointer to race on.
+        OVERLAPPED overlapped{};
+        overlapped.Offset     = static_cast<DWORD>(absolute_offset & 0xFFFFFFFFull);
+        overlapped.OffsetHigh = static_cast<DWORD>(absolute_offset >> 32);
+
+        DWORD bytes = 0;
+        if (::ReadFile(file_, destination.data(), static_cast<DWORD>(destination.size()), &bytes,
+                       &overlapped) == 0) {
+            const int error = static_cast<int>(::GetLastError());
+            if (error == ERROR_HANDLE_EOF) { return 0; }
+            throw std::system_error(error, std::system_category(), "direct artifact read");
+        }
+        return static_cast<std::size_t>(bytes);
+#else
+        if (absolute_offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()) ||
+            destination.size() > static_cast<std::size_t>(std::numeric_limits<ssize_t>::max())) {
+            throw ArtifactError("direct artifact read exceeds platform I/O limits");
+        }
+
+        ssize_t bytes = -1;
+        do {
+            bytes = ::pread(fd_, destination.data(), destination.size(),
+                            static_cast<off_t>(absolute_offset));
+        } while (bytes < 0 && errno == EINTR);
+        if (bytes < 0) {
+            throw std::system_error(errno, std::generic_category(), "direct artifact read");
+        }
+        return static_cast<std::size_t>(bytes);
+#endif
+    }
+
+private:
+#ifdef _WIN32
+    void open_windows(const std::filesystem::path& path) {
+        // FILE_FLAG_NO_BUFFERING is the closest analogue to POSIX O_DIRECT, but Windows
+        // refuses CreateFileMapping on a handle opened with it, and this reader needs the
+        // mapping *and* positioned reads on the same handle. SEQUENTIAL_SCAN preserves the
+        // intended streaming access pattern while letting both paths coexist.
+        file_ = ::CreateFileW(path.c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                              nullptr);
+        if (file_ == INVALID_HANDLE_VALUE) {
+            throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(),
+                                    "CreateFile " + path.string());
+        }
+
+        LARGE_INTEGER file_size{};
+        if (::GetFileSizeEx(file_, &file_size) == 0) {
+            fail_windows(::GetLastError(), "GetFileSizeEx " + path.string());
+        }
+        if (file_size.QuadPart < 0 ||
+            static_cast<std::uintmax_t>(file_size.QuadPart) >
+                std::numeric_limits<std::size_t>::max()) {
+            close_windows();
+            throw ArtifactError("artifact size does not fit the process address space");
+        }
+
+        size_ = static_cast<std::size_t>(file_size.QuadPart);
+        if (size_ == 0) { return; }
+
+        mapping_ = ::CreateFileMappingW(file_, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (mapping_ == nullptr) {
+            fail_windows(::GetLastError(), "CreateFileMapping " + path.string());
+        }
+
+        void* view = ::MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0, 0);
+        if (view == nullptr) {
+            fail_windows(::GetLastError(), "MapViewOfFile " + path.string());
+        }
+        data_ = static_cast<const std::byte*>(view);
+    }
+
+    [[noreturn]] void fail_windows(unsigned long code, const std::string& what) {
+        close_windows();
+        throw std::system_error(static_cast<int>(code), std::system_category(), what);
+    }
+
+    void close_windows() noexcept {
+        if (mapping_ != nullptr) {
+            ::CloseHandle(mapping_);
+            mapping_ = nullptr;
+        }
+        if (file_ != INVALID_HANDLE_VALUE) {
+            ::CloseHandle(file_);
+            file_ = INVALID_HANDLE_VALUE;
+        }
+    }
+
+    HANDLE file_            = INVALID_HANDLE_VALUE;
+    HANDLE mapping_         = nullptr;
+#else
+    void open_posix(const std::filesystem::path& path) {
         const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECT);
         if (fd < 0) {
             throw std::system_error(errno, std::generic_category(), "open " + path.string());
@@ -215,42 +357,8 @@ public:
         size_ = size;
     }
 
-    ~MappedFile() {
-        if (data_ != nullptr) { ::munmap(const_cast<std::byte*>(data_), size_); }
-        if (fd_ >= 0) { ::close(fd_); }
-    }
-
-    MappedFile(const MappedFile&)            = delete;
-    MappedFile& operator=(const MappedFile&) = delete;
-
-    const std::byte* data() const noexcept { return data_; }
-
-    std::size_t size() const noexcept { return size_; }
-
-    std::size_t read_direct(std::uint64_t absolute_offset, std::span<std::byte> destination) const {
-        constexpr std::size_t alignment = Reader::direct_io_alignment;
-        if (absolute_offset % alignment != 0 || destination.size() % alignment != 0 ||
-            reinterpret_cast<std::uintptr_t>(destination.data()) % alignment != 0) {
-            throw ArtifactError("direct artifact read is not 4096-byte aligned");
-        }
-        if (absolute_offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()) ||
-            destination.size() > static_cast<std::size_t>(std::numeric_limits<ssize_t>::max())) {
-            throw ArtifactError("direct artifact read exceeds platform I/O limits");
-        }
-
-        ssize_t bytes = -1;
-        do {
-            bytes = ::pread(fd_, destination.data(), destination.size(),
-                            static_cast<off_t>(absolute_offset));
-        } while (bytes < 0 && errno == EINTR);
-        if (bytes < 0) {
-            throw std::system_error(errno, std::generic_category(), "direct artifact read");
-        }
-        return static_cast<std::size_t>(bytes);
-    }
-
-private:
-    int fd_                = -1;
+    int fd_ = -1;
+#endif
     const std::byte* data_ = nullptr;
     std::size_t size_      = 0;
 };

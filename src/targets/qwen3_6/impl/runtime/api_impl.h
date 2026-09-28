@@ -12,15 +12,31 @@ namespace ninfer::targets::qwen3_6 {
 
 using detail::NINFER_QWEN36_RUNTIME_NS::Variant;
 
+// The move operations below are written out instead of `= default`.
+//
+// These are explicit specialisations (`template <>`) of members of a class template, and
+// MSVC does not emit a symbol for an out-of-line *defaulted* special member of this shape.
+// GCC does, which is why the Linux build never noticed. The consequence was that
+// ninfer_engine.cpp and registry.cpp - which only see the declarations in
+// export/.../runtime.h - failed to link:
+//     LNK2019: unresolved external symbol
+//       ninfer::targets::qwen3_6::RequestBasePlan<Variant>::RequestBasePlan(RequestBasePlan&&)
+//       (same for RequestPlan and SequencePlan)
+// Spelling the bodies out guarantees the symbols exist on both compilers. The bodies are
+// exactly what the defaulted versions did: member-wise move of impl_.
+
 template <>
 SequencePlan<Variant>::SequencePlan(
     std::unique_ptr<detail::SequencePlanImpl<Variant>> impl) noexcept
     : impl_(std::move(impl)) {}
 
 template <>
-SequencePlan<Variant>::SequencePlan(SequencePlan&&) noexcept = default;
+SequencePlan<Variant>::SequencePlan(SequencePlan&& other) noexcept : impl_(std::move(other.impl_)) {}
 template <>
-SequencePlan<Variant>& SequencePlan<Variant>::operator=(SequencePlan&&) noexcept = default;
+SequencePlan<Variant>& SequencePlan<Variant>::operator=(SequencePlan&& other) noexcept {
+    impl_ = std::move(other.impl_);
+    return *this;
+}
 template <>
 SequencePlan<Variant>::~SequencePlan() = default;
 
@@ -60,9 +76,13 @@ SequencePlanner<Variant>::SequencePlanner(
     : impl_(std::move(impl)) {}
 
 template <>
-SequencePlanner<Variant>::SequencePlanner(SequencePlanner&&) noexcept = default;
+SequencePlanner<Variant>::SequencePlanner(SequencePlanner&& other) noexcept
+    : impl_(std::move(other.impl_)) {}
 template <>
-SequencePlanner<Variant>& SequencePlanner<Variant>::operator=(SequencePlanner&&) noexcept = default;
+SequencePlanner<Variant>& SequencePlanner<Variant>::operator=(SequencePlanner&& other) noexcept {
+    impl_ = std::move(other.impl_);
+    return *this;
+}
 template <>
 SequencePlanner<Variant>::~SequencePlanner() = default;
 
@@ -85,9 +105,13 @@ RequestBasePlan<Variant>::RequestBasePlan(
     : impl_(std::move(impl)) {}
 
 template <>
-RequestBasePlan<Variant>::RequestBasePlan(RequestBasePlan&&) noexcept = default;
+RequestBasePlan<Variant>::RequestBasePlan(RequestBasePlan&& other) noexcept
+    : impl_(std::move(other.impl_)) {}
 template <>
-RequestBasePlan<Variant>& RequestBasePlan<Variant>::operator=(RequestBasePlan&&) noexcept = default;
+RequestBasePlan<Variant>& RequestBasePlan<Variant>::operator=(RequestBasePlan&& other) noexcept {
+    impl_ = std::move(other.impl_);
+    return *this;
+}
 template <>
 RequestBasePlan<Variant>::~RequestBasePlan() = default;
 
@@ -102,9 +126,12 @@ RequestPlan<Variant>::RequestPlan(std::unique_ptr<detail::RequestPlanImpl<Varian
     : impl_(std::move(impl)) {}
 
 template <>
-RequestPlan<Variant>::RequestPlan(RequestPlan&&) noexcept = default;
+RequestPlan<Variant>::RequestPlan(RequestPlan&& other) noexcept : impl_(std::move(other.impl_)) {}
 template <>
-RequestPlan<Variant>& RequestPlan<Variant>::operator=(RequestPlan&&) noexcept = default;
+RequestPlan<Variant>& RequestPlan<Variant>::operator=(RequestPlan&& other) noexcept {
+    impl_ = std::move(other.impl_);
+    return *this;
+}
 template <>
 RequestPlan<Variant>::~RequestPlan() = default;
 

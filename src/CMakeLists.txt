@@ -48,9 +48,22 @@ target_link_libraries(ninfer_artifact PUBLIC ninfer_core)
 # producer warpgroup to its consumer warpgroups. Relocatable device code makes ptxas
 # discard that contract, so this self-contained kernel is intentionally compiled in a
 # non-RDC archive and called through a host launcher from ninfer_ops.
-add_library(ninfer_nvfp4_tma STATIC
-  ops/linear/nvfp4/nvfp4_w4a4_tma.cu
-  ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_w4a4_tma.cu)
+#
+# MSVC cannot build the two CUDA translation units at all: they pass 128-byte aligned
+# CUtensorMap descriptors by value into __global__ functions, and MSVC's ABI caps
+# by-value parameter alignment at 64 (error C2719). The alignment comes from the CUDA
+# type, so it cannot be lowered, and __grid_constant__ rules out references. On MSVC we
+# substitute a stub that throws at every entry point, which keeps NVFP4 models failing
+# loudly at the point of use instead of the build silently losing the feature. See the
+# "error C2719" section of docs/WINDOWS_5070TI.md.
+if(MSVC)
+  add_library(ninfer_nvfp4_tma STATIC
+    ops/linear/nvfp4/nvfp4_tma_windows_stub.cpp)
+else()
+  add_library(ninfer_nvfp4_tma STATIC
+    ops/linear/nvfp4/nvfp4_w4a4_tma.cu
+    ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_w4a4_tma.cu)
+endif()
 ninfer_internal_includes(ninfer_nvfp4_tma)
 set_target_properties(ninfer_nvfp4_tma PROPERTIES
   CUDA_SEPARABLE_COMPILATION OFF
@@ -322,6 +335,13 @@ if(NINFER_BUILD_MEDIA_ACQUIRE)
     product/media_acquire/acquire.cpp)
   ninfer_internal_includes(ninfer_media_acquire)
   target_link_libraries(ninfer_media_acquire PRIVATE PkgConfig::LIBCURL)
+  if(WIN32)
+    # acquire.cpp resolves hosts with the Winsock API directly (WSAStartup, getaddrinfo,
+    # freeaddrinfo, ntohl, inet_ntop). Those live in ws2_32 and nothing else on the link
+    # line pulls it in, now that WIN32_LEAN_AND_MEAN keeps the legacy winsock.h - and its
+    # implicit wsock32.lib - out of windows.h.
+    target_link_libraries(ninfer_media_acquire PRIVATE ws2_32)
+  endif()
 endif()
 
 if(NINFER_BUILD_PROMPT_INPUT)

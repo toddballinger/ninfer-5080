@@ -14,6 +14,11 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
+// __builtin_memcpy is a GCC/Clang builtin and does not exist under MSVC. memcpy on a
+// compile-time-constant size lowers to the same single load/store pair on both
+// compilers, so use the portable spelling.
+#include <cstring>
+
 #include <cstdint>
 
 namespace ninfer::ops {
@@ -167,7 +172,7 @@ __device__ __forceinline__ int4 gqa_kv_dequant_i8x8_from(const std::int8_t* code
 // Dequantize 8 consecutive signed INT4 codes from 4 packed bytes.
 __device__ __forceinline__ int4 gqa_kv_dequant_q4x8_from(const std::uint8_t* codes4, float s) {
     std::uint32_t raw = 0;
-    __builtin_memcpy(&raw, codes4, sizeof(raw));
+    memcpy(&raw, codes4, sizeof(raw));
 
     unsigned values[4];
 #pragma unroll
@@ -188,7 +193,7 @@ __device__ __forceinline__ int4 gqa_kv_dequant_q2x8_from(
     const std::uint8_t* codes2, float scale) {
 
     std::uint16_t raw = 0;
-    __builtin_memcpy(&raw, codes2, sizeof(raw));
+    memcpy(&raw, codes2, sizeof(raw));
 
     unsigned values[4];
 
