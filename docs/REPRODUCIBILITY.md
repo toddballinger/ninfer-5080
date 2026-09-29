@@ -7,8 +7,9 @@ This guide describes the validated RTX 5080 true-128K path with Vision enabled.
 - NVIDIA GeForce RTX 5080 16 GB
 - Linux
 - GCC 15.2.0
-- CUDA 13.3.73
-- validated Vision source commit: `7c10db07ac8c5803f921b83603b707750652873e`
+- CUDA 13.4.92
+- NVIDIA driver 615.71.09
+- validated v1.5 production source: `e4353f061bf0e378c83472cb2bcaf99e65681f4e`
 
 The original text-only release remains frozen at `473dade56031852a7d96edef049d859da96a6df9` / tag `qwen3.8-27b-rtx5080-128k-v1`.
 
@@ -47,46 +48,79 @@ SHA256: c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
 
 The text core is a mixed Q3/Q4/Q5 groupwise profile at approximately 3.953 effective BPW. The full `.ninfer` container size is not itself a GGUF-comparable BPW numerator.
 
-## Recommended true-128K Vision server
-
-Use `1792` Vision tokens as the recommended validated default:
+## Recommended v1.5 true-128K Vision server
 
 ```bash
-./build/apps/ninfer-serve /path/to/model.ninfer \
+./build/apps/ninfer-serve /path/to/qwen3_8_27b.ninfer \
   --host 0.0.0.0 \
   --port 8080 \
-  --model-id qwen3.8-27b \
+  --model-id local-model \
   --max-context 131072 \
   --kv-capacity 131072 \
-  --prefill-chunk 896 \
+  --prefill-chunk 1792 \
   --kv-dtype q4 \
   --spec mtp \
   --draft-tokens 3 \
-  --no-cuda-graph \
   --max-concurrency 1 \
+  --max-pending-requests 16 \
+  --pending-timeout-ms 180000 \
+  --embedding-host \
   --vision \
-  --vision-max-tokens 1792
+  --vision-max-tokens 2048 \
+  --default-thinking-budget 2048 \
+  --prefix-checkpoint-policy rolling-tool
 ```
 
-Measured startup envelope at 1792:
+CUDA Graph is enabled by default.
+
+Validated startup envelope:
 
 ```text
-vision_encode workspace  115.7751 MiB
-free after weights         2.56 GiB
-free after startup         26.56 MiB
-planned slack              28.88 MiB
+free after startup  885.94 MiB
+planned slack       806.92 MiB
+vision workspace    132.3142 MiB
 ```
 
-The maximum validated Vision setting is `--vision-max-tokens 2048`.
+## Canonical v1.5 whole-model benchmark
 
-At 2048 the measured startup envelope was:
+Release performance is measured with `ninfer_bench`:
 
 ```text
-vision_encode workspace  132.3142 MiB
-free after weights         2.56 GiB
-free after startup          8.56 MiB
-planned slack              10.08 MiB
+fixture=bench/fixtures/workflow-118k-v1/ninfer_bench_118001.ids
+corpus_sha256=5b08da2c7b7ea5cafad2fab5699dccbcbce86040d8a37219b8c21f094d1d1eb7
+test=pp118001+tg2048
+warmup=1
+measured_repetitions=2
+prefill=1374.383 tok/s
+sustained_decode=112.215 tok/s
 ```
+
+## Automated CPU-only artifact conversion
+
+The repository includes a GitHub Actions workflow that performs the
+Qwen3.8-27B conversion entirely on CPU. **No local GPU is required.**
+
+The workflow is manually triggered and runs on an explicitly provisioned
+runner with sufficient CPU, RAM and disk capacity. Standard `ubuntu-latest`
+is not treated as sufficient for the complete 27B conversion.
+
+The integrated low-memory path uses:
+
+- pinned source revisions and conversion-critical dependencies;
+- true row-sliced Safetensors reads rather than repeated full-tensor loads;
+- streamed artifact payload assembly;
+- exact canonical groupwise artifact byte-size and SHA-256 gates;
+- `.conversion.json` provenance publication.
+
+Canonical groupwise artifact:
+
+```text
+bytes: 16461267456
+SHA256: c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
+```
+
+The NVFP4 workflow profile is a separate artifact profile and does not inherit
+this groupwise artifact identity.
 
 ## Clean-GPU prerequisite
 

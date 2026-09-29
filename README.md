@@ -162,11 +162,17 @@ The effective main-model quantization is approximately **3.953 BPW**.
 
 ## Reproducibility and CI
 
-The official Hugging Face artifact above is currently the **validated reference artifact**.
+The official Hugging Face artifact above remains the **validated reference artifact**.
 
-A CPU-only GitHub Actions conversion/publishing workflow is being developed separately. Its acceptance criterion is intentionally strict: before an automated build can replace or republish the canonical artifact, it should reproduce the exact expected byte size and SHA-256.
+The repository now includes an **automated CPU-only GitHub Actions conversion and publishing workflow**. No local GPU is required to build the artifact.
 
-That means build automation can evolve without weakening the artifact identity contract.
+The full conversion runs on an explicitly provisioned runner with sufficient CPU, RAM and disk capacity; standard `ubuntu-latest` is not treated as sufficient for this large conversion.
+
+The integrated low-memory path uses row-sliced Safetensors reads and streamed artifact payload assembly. Conversion-critical dependencies and source revisions are pinned, and the canonical groupwise artifact must match both the exact expected byte count and SHA-256 before publication.
+
+The associated `.conversion.json` provenance record is published alongside the artifact.
+
+The NVFP4 workflow profile remains a separate artifact profile and does not share the canonical groupwise artifact's expected size or SHA-256.
 
 ## Documentation
 

@@ -1,11 +1,10 @@
 # Memory Profile
 
 
-## Current v1.4 production memory envelope
+## Current v1.5 production memory envelope
 
-v1.4 changes the RTX 5080 memory picture materially. The token embedding table is now host-mapped
-with `--embedding-host`, recovering about **796 MiB** of persistent VRAM. That headroom makes the
-full Vision-2048 profile comfortable enough to enable CUDA Graph decode.
+v1.5 retains host-mapped token embeddings and CUDA Graph decode while moving
+the production prefill chunk to 1792 under CUDA 13.4.92 / NVIDIA 615.71.09.
 
 Validated production profile:
 
@@ -13,33 +12,30 @@ Validated production profile:
 MAX_CONTEXT=131072
 KV_CAPACITY=131072
 KV_DTYPE=q4-group64
-PREFILL_CHUNK=896
+PREFILL_CHUNK=1792
 MTP_DRAFT_TOKENS=3
 VISION_MAX_TOKENS=2048
 EMBEDDING_HOST=on
 CUDA_GRAPHS=on
 ```
 
-Measured startup envelope:
+Validated v1.5 startup envelope:
 
 ```text
 embedding host-resident  795.70 MiB
-process VRAM             15028 MiB
-text_prefill             116.0127 MiB
-mtp_prefill              116.0127 MiB
 vision_encode            132.3142 MiB
-free after startup       794.56 MiB
-planned slack            715.54 MiB
+free after startup       885.94 MiB
+planned slack            806.92 MiB
 graph observed             2.00 MiB
 graph allowance           82.00 MiB
 ```
 
-For comparison, the validated pre-v1.4 Vision-2048 profile had only **8.56 MiB free / 10.08 MiB
-planned slack** with embeddings device-resident and CUDA Graph disabled. Those older measurements
-below are retained as historical evidence, not the current recommendation.
+For comparison, v1.4 validated 794.56 MiB free after startup and
+715.54 MiB planned slack. The older pre-v1.4 Vision-2048 configuration had
+only 8.56 MiB free / 10.08 MiB planned slack.
 
-
-Historically, true 128K + Vision was a near-capacity fit on a 16 GB RTX 5080. v1.4 host-mapped embeddings materially change that envelope; the sections below preserve the earlier memory-engineering path and measurements.
+Those older measurements remain below as historical evidence; v1.5 is the
+current production-qualified profile.
 
 ## Text-model quantization
 

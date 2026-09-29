@@ -6,48 +6,44 @@ Validated Vision source commit before merge to `main`:
 
 `7c10db07ac8c5803f921b83603b707750652873e`
 
-## Recommended v1.4 serving command
+## Recommended v1.5 serving command
 
-The current RTX 5080 production recommendation is **Vision 2048 with host-mapped embeddings and
-CUDA Graph enabled**:
+The current RTX 5080 production recommendation is **Vision 2048 with host-mapped embeddings, CUDA Graph enabled, and a 1792-token prefill chunk**:
 
-```bash
-./build/apps/ninfer-serve /path/to/model.ninfer \
+{f}bash
+./build/apps/ninfer-serve /path/to/qwen3_8_27b.ninfer \
   --host 0.0.0.0 \
   --port 8080 \
-  --model-id qwen3.8-27b \
+  --model-id local-model \
   --max-context 131072 \
   --kv-capacity 131072 \
-  --prefill-chunk 896 \
+  --prefill-chunk 1792 \
   --kv-dtype q4 \
   --spec mtp \
   --draft-tokens 3 \
-  --embedding-host \
   --max-concurrency 1 \
-  --default-thinking-budget 2048 \
-  --prefix-checkpoint-policy rolling-tool \
+  --max-pending-requests 16 \
+  --pending-timeout-ms 180000 \
+  --embedding-host \
   --vision \
-  --vision-max-tokens 2048
-```
+  --vision-max-tokens 2048 \
+  --default-thinking-budget 2048 \
+  --prefix-checkpoint-policy rolling-tool
+{f}
 
-CUDA Graph is enabled by default; do not add `--no-cuda-graph` for the recommended v1.4 profile.
+CUDA Graph is enabled by default; do not add `--no-cuda-graph` for the recommended v1.5 profile.
 
-Validated v1.4 workspace/startup envelope:
+Validated v1.5 deployment envelope:
 
-```text
-text_prefill             116.0127 MiB
-mtp_prefill              116.0127 MiB
+{f}text
 vision_encode            132.3142 MiB
-embedding host-resident  795.70 MiB
-free after startup       794.56 MiB
-planned slack            715.54 MiB
+free after startup       885.94 MiB
+planned slack            806.92 MiB
 graph observed             2.00 MiB
 graph allowance           82.00 MiB
-```
+{f}
 
-The Vision path itself remains the previously validated HostMapped Vision implementation; v1.4
-adds host residency for the token embedding table, recovering enough persistent VRAM that the
-2048-token Vision profile no longer has the pre-v1.4 ~10 MiB margin.
+v1.5 retains the HostMapped Vision path and host-resident token embeddings while moving the production prefill chunk from 896 to 1792 under CUDA 13.4.92 / NVIDIA 615.71.09.
 
 ### Historical pre-v1.4 profiles
 
@@ -87,13 +83,15 @@ Image understanding is empirically validated. OpenWebUI multi-image history is a
 
 Video input is now empirically validated on the final 128K HostMapped Vision configuration using a deterministic chronological-color MP4 test. This validates the end-to-end video acquisition, preprocessing, Vision encode and generation path on the RTX 5080 configuration; it is not a broad video-quality benchmark.
 
-## Current v1.4 validation hashes
+## v1.5 validation identity
 
-```text
+{f}text
+release tag:         qwen3.8-27b-rtx5080-128k-vision-v1.5
+release commit:      e4edd6d5c5f9f7996de0f3d9f6c311e883452580
+validated source:    e4353f061bf0e378c83472cb2bcaf99e65681f4e
 model SHA256:        c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
-ninfer SHA256:       38affd44afede11682500cba846d8a8b5c93cfe70259c73a72c1d5e3cef163bf
-ninfer-serve SHA256: b936e179a06ad6b78b4fa4b3ae683efea928abf1888a6e2c3813fdeea9294a44
-```
+ninfer-serve SHA256: 928e5615ef453786f47f79b6af2152d2f8f8d61307656f23c47fa45b5ed41167
+{f}
 
 ## Historical Vision-source validation hashes
 
