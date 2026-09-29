@@ -59,10 +59,13 @@ jobs:
     # Supplying a runner label does not require or imply use of Brain.
     runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 1440
-    env:
-      HF_HOME: ${{ runner.temp }}/hf-cache
-
     steps:
+      - name: Configure runner-local Hugging Face cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "HF_HOME=${RUNNER_TEMP}/hf-cache" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
