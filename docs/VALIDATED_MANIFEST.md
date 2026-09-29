@@ -3,7 +3,61 @@
 This file records immutable and subsequently validated milestones by exact commit, binary and artifact identity. Validation claims are attached to the source tree that was actually tested rather than to a floating branch label.
 
 
-## Current production release — v1.4
+## Current production release — v1.5
+
+```text
+release tag: qwen3.8-27b-rtx5080-128k-vision-v1.5
+release commit: e4edd6d5c5f9f7996de0f3d9f6c311e883452580
+validated source tree: e4353f061bf0e378c83472cb2bcaf99e65681f4e
+model SHA256: c4a7e9ab593a7f42d58208fa0065d67a82d61921107686cc9f6ed1ec6b050e21
+ninfer-serve SHA256: 928e5615ef453786f47f79b6af2152d2f8f8d61307656f23c47fa45b5ed41167
+
+Validated production runtime:
+MAX_CONTEXT=131072
+KV_CAPACITY=131072
+PREFILL_CHUNK=1792
+KV_DTYPE=q4-group64
+SPECULATION=mtp
+DRAFT_TOKENS=3
+EMBEDDING_HOST=on
+CUDA_GRAPHS=on
+VISION=on
+VISION_MAX_TOKENS=2048
+MAX_CONCURRENCY=1
+MAX_PENDING_REQUESTS=16
+PENDING_TIMEOUT_MS=180000
+DEFAULT_THINKING_BUDGET=2048
+PREFIX_CHECKPOINT_POLICY=rolling-tool
+
+Canonical v1.5 ninfer_bench qualification:
+FIXTURE=bench/fixtures/workflow-118k-v1/ninfer_bench_118001.ids
+CORPUS_SHA256=5b08da2c7b7ea5cafad2fab5699dccbcbce86040d8a37219b8c21f094d1d1eb7
+PROMPT_TOKENS=118001
+TEST=pp118001+tg2048
+WARMUP=1
+MEASURED_REPETITIONS=2
+PREFILL_TOK_S=1374.383
+SUSTAINED_DECODE_TOK_S=112.215
+MAX_CONTEXT=131072
+KV_CAPACITY=131072
+KV_DTYPE=q4-group64
+PREFILL_CHUNK=1792
+MTP_DRAFT_TOKENS=3
+CUDA_GRAPHS=on
+EMBEDDING_HOST=on
+RESULT=PASS
+
+Validated deployment:
+GPU=NVIDIA GeForce RTX 5080 16 GB
+CUDA=13.4.92
+DRIVER=615.71.09
+FREE_AFTER_STARTUP=885.94_MiB
+PLANNED_SLACK=806.92_MiB
+VISION_MAX_TOKENS=2048
+
+The model artifact is unchanged from the earlier releases; v1.5 is a runtime,
+toolchain and performance release.
+## Historical production release — v1.4
 
 ```text
 release tag: qwen3.8-27b-rtx5080-128k-vision-v1.4
@@ -458,5 +512,5 @@ The Hugging Face repository also contains a model card and checksum record. A te
 
 This publication establishes the project-owned Hugging Face repository as the canonical distribution location for the validated RTX 5080 artifact. The existing model SHA remains unchanged; later runtime work should not be described as requiring a new model artifact unless the artifact identity itself changes.
 
-Automated CPU-only conversion/publication is being integrated separately. Any future workflow claiming byte-identical reproduction should enforce the exact expected byte size and SHA-256 before publishing.
+Automated CPU-only conversion/publication is now integrated through the project GitHub Actions workflow. The canonical groupwise artifact is gated against the exact expected byte size and SHA-256 before publishing, with conversion provenance recorded alongside the artifact.
 
