@@ -77,6 +77,33 @@ class ShardReader:
         handle = self._open_shard(shard)
         return handle.get_tensor(name)
 
+    def get_rows(
+        self,
+        name: str,
+        row_begin: int,
+        row_end: int,
+    ) -> torch.Tensor:
+        """Materialize only the requested rows from a safetensors tensor."""
+        if row_begin < 0:
+            raise ValueError("row_begin must be non-negative")
+        if row_end < row_begin:
+            raise ValueError("row_end must be >= row_begin")
+
+        shard = self.weight_map[name]
+        handle = self._open_shard(shard)
+        tensor_slice = handle.get_slice(name)
+        shape = tuple(tensor_slice.get_shape())
+
+        if not shape:
+            raise ValueError(f"{name}: row slicing requires rank >= 1")
+        if row_end > shape[0]:
+            raise IndexError(
+                f"{name}: row range [{row_begin}:{row_end}] exceeds "
+                f"dimension 0 size {shape[0]}"
+            )
+
+        return tensor_slice[row_begin:row_end]
+
     def metadata(self, names: Iterable[str]) -> dict[str, TensorMetadata]:
         self.close()
         by_shard: dict[str, list[str]] = {}
