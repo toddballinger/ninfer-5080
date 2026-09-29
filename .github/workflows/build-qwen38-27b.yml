@@ -146,7 +146,7 @@ jobs:
 
           echo "$RUNNER_TEMP/ninfer-venv/bin" >> "$GITHUB_PATH"
 
-          python - <<'PYVERS'
+          "$RUNNER_TEMP/ninfer-venv/bin/python" - <<'PYVERS'
           import huggingface_hub
           import numpy
           import safetensors
