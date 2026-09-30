@@ -23,6 +23,33 @@ z-lab/Qwen3.8-27B-DFlash2
 50307d4c4cde6860d4eee73e2547cd786fe8e8a4
 ```
 
+## Convert the canonical artifact locally
+
+The Qwen3.8 converter requires both the base checkpoint and the pinned DFlash2
+checkpoint because the complete `.ninfer` artifact includes registered DFlash2
+tensor objects as well as the base model. The argument is therefore required even
+when the runtime will normally use MTP rather than DFlash2.
+
+A CPU conversion is:
+
+```bash
+python3 -m tools.convert.qwen3_8_27b.convert \
+  --model /path/to/Qwen3.8-27B \
+  --dflash2-model /path/to/Qwen3.8-27B-DFlash2 \
+  --out out/qwen3_8_27b.ninfer \
+  --device cpu
+```
+
+The converter performs the registered source/resource preflight and writes the
+provenance record alongside the artifact as
+`out/qwen3_8_27b.ninfer.conversion.json`.
+
+For the canonical project artifact, verify the exact byte count and SHA-256 shown
+below before treating the result as equivalent to the published reference artifact.
+An alternative fine-tune may be structurally convertible and even produce the same
+container byte count without being the canonical artifact; artifact identity is
+hash-based, not size-based.
+
 ## Build
 
 Use a Release build and record compiler/CUDA/driver details if benchmark parity matters:
@@ -95,6 +122,25 @@ prefill=1374.383 tok/s
 sustained_decode=112.215 tok/s
 ```
 
+## 118K regression qualification helper
+
+For the RTX 5080 16 GB regression-acceptance path, run:
+
+```bash
+./tools/qualify_qwen38_118k.sh /path/to/qwen3_8_27b.ninfer
+```
+
+The helper now enables `--embedding-host` by default, matching the current 16 GB
+RTX 5080 memory profile. Additional CLI arguments may still be appended after the
+artifact path.
+
+This helper is a long-context regression/stability qualification using the historical
+118,001-token prompt, `prefill-chunk=896`, a short 32-token generation, and CUDA
+Graph disabled. It is **not** the current v1.5 whole-model performance benchmark.
+Release performance should continue to be compared with the committed
+`ninfer_bench pp118001+tg2048` contract documented above and in
+[BENCHMARKS.md](BENCHMARKS.md).
+
 ## Automated CPU-only artifact conversion
 
 The repository includes a GitHub Actions workflow that performs the
@@ -139,7 +185,9 @@ nvidia-smi
 nvidia-smi --query-gpu=memory.total,memory.used,memory.free --format=csv,noheader,nounits
 ```
 
-The 2048 profile is extremely tight; even a small competing GPU allocation can make startup fail. The recommended 1792 profile provides materially more startup margin while keeping full `131072 / 131072` text context/KV.
+The current v1.5 production profile is qualified at Vision-2048 with host-mapped embeddings. A clean GPU remains important because unrelated allocations directly reduce the available margin.
+
+A community WSL2/RTX 5080 qualification in [Issue #39](https://github.com/toddballinger/ninfer-5080/issues/39) reproduced the 118,001-token regression pass with `--embedding-host` and measured only about 2-2.5 MiB additional memory moving from `--vision-max-tokens 1792` to `2048` in that setup. Treat this as an external WSL2 datapoint rather than the canonical native-Linux release measurement.
 
 ## True 128K definition
 
