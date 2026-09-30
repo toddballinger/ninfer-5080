@@ -149,6 +149,22 @@ z-lab/Qwen3.8-27B-DFlash2
 revision: 50307d4c4cde6860d4eee73e2547cd786fe8e8a4
 ```
 
+Exact local CPU conversion:
+
+```bash
+python3 -m tools.convert.qwen3_8_27b.convert \
+  --model /path/to/Qwen3.8-27B \
+  --dflash2-model /path/to/Qwen3.8-27B-DFlash2 \
+  --out out/qwen3_8_27b.ninfer \
+  --device cpu
+```
+
+`--dflash2-model` is required because the complete registered artifact includes
+DFlash2 tensor objects even when the serving profile normally selects MTP. The
+converter writes a matching `.conversion.json` provenance record. See
+[Reproducibility](docs/REPRODUCIBILITY.md) for the full conversion and verification
+contract.
+
 Main text-core quantization:
 
 | Format | Share |
