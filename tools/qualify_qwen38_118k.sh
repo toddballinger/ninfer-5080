@@ -62,6 +62,7 @@ main() {
         --kv-dtype q4 \
         --spec mtp \
         --draft-tokens 3 \
+        --embedding-host \
         --max-new 32 \
         --no-thinking \
         --greedy \
@@ -116,6 +117,7 @@ main() {
     echo "PREFILL_CHUNK=896"
     echo "KV_DTYPE=q4-group64"
     echo "SPECULATION=MTP-3"
+    echo "EMBEDDING_HOST=enabled"
     echo "MAX_NEW=32"
     echo "THINKING=disabled"
     echo "SAMPLING=greedy"
