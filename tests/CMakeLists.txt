@@ -67,6 +67,14 @@ ninfer_add_test(ninfer_tensor_test       SOURCES test_tensor.cpp)
 ninfer_add_test(ninfer_arena_test        SOURCES test_arena.cpp)
 ninfer_add_test(ninfer_request_memory_test SOURCES test_request_memory.cpp)
 ninfer_add_test(ninfer_admission_policy_test SOURCES test_admission_policy.cpp)
+ninfer_add_test(ninfer_concurrent_executor_boundary_seam_test
+  SOURCES test_concurrent_executor_boundary_seam.cpp)
+# M1 real-MTP production boundary-seam probe (GPU-gated; SKIP_RETURN_CODE 77).
+ninfer_add_test(ninfer_qwen3_6_27b_m1_mtp_seam_real_test
+  SOURCES targets/qwen3_6_27b/test_m1_mtp_seam_real.cpp
+  LIBRARIES ninfer_engine)
+set_tests_properties(ninfer_qwen3_6_27b_m1_mtp_seam_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp)
 ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp
@@ -265,6 +273,9 @@ ninfer_add_op_test(ninfer_gdn_input_proj_test
   LIBRARIES ninfer_ops)
 ninfer_add_op_test(ninfer_dynamic_grouped_conv_prepare_test
   SOURCES ops/test_dynamic_grouped_conv_prepare.cpp
+  LIBRARIES ninfer_ops)
+ninfer_add_op_test(ninfer_dynamic_grouped_conv_prepare_q6_test
+  SOURCES ops/test_dynamic_grouped_conv_prepare_q6.cpp
   LIBRARIES ninfer_ops)
 ninfer_add_op_test(ninfer_linear_dynamic_grouped_conv_add_test
   SOURCES ops/test_linear_dynamic_grouped_conv_add.cpp

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <deque>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,6 +31,55 @@
 
 namespace ninfer::runtime {
 
+// M1 between-round boundary seam observation: the (request, lane, round) triple emitted at the
+// decode post-commit boundary. Defined at namespace scope (not inside the class template) so a
+// generic CPU test can reference it without naming an Instance. Carried by the MTP-gated seam.
+struct BoundaryObservation {
+    std::uint64_t request_id = 0;
+    std::uint32_t lane       = 0;
+    std::uint64_t round_index = 0;
+};
+
+// Non-template, instance-free test-only accessor for the boundary seam (mirrors the repo
+// FrontendTestAccess idiom). Every static operates on BoundaryObservation values alone, so it
+// needs no Instance and no friend. A full behavioral seam test would additionally exercise the
+// instance methods mtp_gate() / boundary_observer(); that remains GPU/broad-frontend blocked.
+class BoundarySeamTestAccess {
+public:
+    static constexpr BoundaryObservation Make(std::uint64_t request_id, std::uint32_t lane,
+                                              std::uint64_t round_index) noexcept {
+        return BoundaryObservation{request_id, lane, round_index};
+    }
+
+    // Asserts that consecutive observations keep identical request/lane identity on strictly
+    // increasing rounds (the M1 structural identity invariant the seam is designed to prove).
+    static bool ValidRoundTrip(std::span<const BoundaryObservation> observations) {
+        for (std::size_t i = 0; i + 1 < observations.size(); ++i) {
+            if (observations[i].request_id != observations[i + 1].request_id) { return false; }
+            if (observations[i].lane != observations[i + 1].lane) { return false; }
+            if (observations[i].round_index >= observations[i + 1].round_index) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+// The M1 between-round boundary seam emission, factored out of the post-commit path as a
+// pure, instance-free helper so the production seam and the CPU test exercise the same
+// code path: a non-MTP backend (mtp_gated == false) or a null observer emits nothing;
+// otherwise every supplied (lane, request_id) observation is handed to the observer with
+// that round_index. This is the exact helper the production post-commit boundary calls.
+inline void boundary_seam_helper(bool mtp_gated,
+                                 const std::function<void(const BoundaryObservation&)> &observer,
+                                 std::span<const std::pair<std::uint32_t, std::uint64_t>> lanes,
+                                 std::uint64_t round_index) noexcept {
+    if (!mtp_gated || observer == nullptr) { return; }
+    for (const auto &p : lanes) {
+        observer(BoundaryObservation{p.second, p.first, round_index});
+    }
+}
+
 template <class Instance>
 class ConcurrentExecutor {
     struct Request;
@@ -41,12 +91,24 @@ public:
     using Plan     = typename Package::RequestPlan;
     using Clock    = std::chrono::steady_clock;
 
+    // M1 boundary seam public surface (instance methods; the observation type and the
+    // instance-free test accessor are the namespace-scope BoundaryObservation /
+    // BoundarySeamTestAccess above). mtp_gate() reports whether this executor's backend is
+    // MTP (the only backend the seam is enabled for); boundary_observer() is the test-only
+    // injection point — no production observer is ever installed, so the seam is inert by
+    // default and for every non-MTP backend.
+    [[nodiscard]] bool mtp_gate() const noexcept { return mtp_gate_; }
+    void boundary_observer(std::function<void(const BoundaryObservation&)> observer) {
+        boundary_observer_ = std::move(observer);
+    }
+
     ConcurrentExecutor(Instance& instance, const EngineOptions& options)
         : instance_(instance), max_concurrency_(options.max_concurrency),
           max_outstanding_(static_cast<std::size_t>(options.max_concurrency) +
                            options.max_pending_requests),
           pending_timeout_(std::chrono::milliseconds(options.pending_timeout_ms)),
-          admission_capacity_(instance.program->admission_capacity()) {
+          admission_capacity_(instance.program->admission_capacity()),
+          mtp_gate_(options.speculative.backend == SpeculativeBackend::Mtp) {
         if (max_concurrency_ == 0 || max_concurrency_ > kMaximumConcurrency ||
             options.max_pending_requests == 0 || pending_timeout_.count() <= 0) {
             throw std::invalid_argument("concurrent executor bounds are invalid");
@@ -57,6 +119,12 @@ public:
         }
         worker_ = std::thread([this] { worker_loop(); });
     }
+
+    // M1 boundary-seam test access (FrontendTestAccess idiom): lets a CPU/GPU test reach
+    // the private seam surface of the ConcurrentExecutor. The seam is inert by default
+    // (production never installs an observer); no product header or public Engine API is
+    // changed, and no OS yield is added.
+    friend class BoundarySeamTestAccess;
 
     ~ConcurrentExecutor() noexcept {
         {
@@ -1093,6 +1161,20 @@ private:
                 remove_completed_slot(lane);
             }
         }
+        // M1 private between-round boundary seam: strictly MTP-gated, test-observable, no
+        // ownership transfer, no public API, and no OS yield. Each still-active lane emits one
+        // (request_id, lane, round_index) observation at the post-commit boundary; the null-
+        // slot skip and the gate + observer emission live in boundary_seam_helper, which the
+        // production seam and the CPU test both exercise.
+        if (mtp_gate_ && boundary_observer_) {
+            std::vector<std::pair<std::uint32_t, std::uint64_t>> active;
+            for (std::size_t row = 0; row < lanes.size(); ++row) {
+                const std::uint32_t lane = lanes[row];
+                if (slots_[lane] != nullptr) { active.emplace_back(lane, slots_[lane]->id); }
+            }
+            boundary_seam_helper(true, boundary_observer_, active,
+                                 cumulative_stats_.decode_rounds);
+        }
         ++cumulative_stats_.decode_rounds;
         cumulative_stats_.decode_row_rounds += lanes.size();
         for (std::size_t row = 0; row < lanes.size(); ++row) {
@@ -1187,6 +1269,12 @@ private:
             }
         }
     }
+
+    // M1 boundary-seam state; the public surface is the BoundaryObservation /
+    // BoundarySeamTestAccess namespace types plus the mtp_gate() / boundary_observer()
+    // methods declared in the public section above.
+    const bool mtp_gate_;
+    std::function<void(const BoundaryObservation&)> boundary_observer_;
 
     Instance& instance_;
     const std::uint32_t max_concurrency_;

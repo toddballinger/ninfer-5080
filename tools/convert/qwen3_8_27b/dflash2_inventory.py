@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tools.convert.qwen3_6.common.inventory import BF16, TensorSpec, W8, tensor_spec
+from tools.convert.qwen3_6.common.inventory import BF16, Q6, TensorSpec, W8, tensor_spec
 
 
 DFLASH2_LAYERS = tuple(range(5))
@@ -26,7 +26,7 @@ def _build_dflash2_specs() -> tuple[TensorSpec, ...]:
                 tensor_spec(
                     prefix + "attention_conv/kernel_projection",
                     (1280, 5120),
-                    BF16,
+                    Q6,
                 ),
                 tensor_spec(
                     prefix + "attention/query_key_value",
@@ -49,7 +49,7 @@ def _build_dflash2_specs() -> tuple[TensorSpec, ...]:
                 tensor_spec(
                     prefix + "mlp_conv/kernel_projection",
                     (1280, 5120),
-                    BF16,
+                    Q6,
                 ),
                 tensor_spec(prefix + "mlp/gate_up", (34816, 5120), W8),
                 tensor_spec(prefix + "mlp/down", (5120, 17408), W8),

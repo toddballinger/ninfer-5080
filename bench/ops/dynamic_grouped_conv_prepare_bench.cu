@@ -2,6 +2,7 @@
 
 #include "direct_bf16_weight.cuh"
 #include "ninfer_bench_common.h"
+#include "quantized_weight.cuh"
 
 #include <cuda_runtime.h>
 
@@ -27,12 +28,19 @@ constexpr std::int32_t kSides            = 2;
 constexpr std::int32_t kCoefficientRows  = 1280;
 constexpr std::size_t kDefaultFlushBytes = 256ULL << 20;
 
+enum class Format {
+    Bf16,
+    Q6,
+    Both,
+};
+
 struct Options {
     int width               = 0;
     int batch               = 0;
     int warmup              = 8;
     int repeat              = 40;
     std::size_t flush_bytes = kDefaultFlushBytes;
+    Format format           = Format::Both;
 };
 
 Options parse_args(int argc, char** argv) {
@@ -46,6 +54,17 @@ Options parse_args(int argc, char** argv) {
             options.width = std::atoi(next("width"));
         } else if (!std::strcmp(argv[index], "--batch")) {
             options.batch = std::atoi(next("batch"));
+        } else if (!std::strcmp(argv[index], "--format")) {
+            const std::string value = next("format");
+            if (value == "bf16")
+                options.format = Format::Bf16;
+            else if (value == "q6")
+                options.format = Format::Q6;
+            else if (value == "both")
+                options.format = Format::Both;
+            else
+                throw std::invalid_argument(
+                    "format must be bf16, q6, or both");
 
         } else if (!std::strcmp(argv[index], "--warmup")) {
             options.warmup = std::atoi(next("warmup"));
@@ -57,7 +76,8 @@ Options parse_args(int argc, char** argv) {
             options.flush_bytes = static_cast<std::size_t>(mib) << 20;
         } else if (!std::strcmp(argv[index], "--help") || !std::strcmp(argv[index], "-h")) {
             std::printf(
-                "usage: %s [--width W] [--batch B] [--warmup N] [--repeat N] [--flush-mib N]\n",
+                "usage: %s [--width W] [--batch B] [--format bf16|q6|both] "
+                "[--warmup N] [--repeat N] [--flush-mib N]\n",
                 argv[0]);
             std::exit(0);
         } else {
@@ -71,9 +91,10 @@ Options parse_args(int argc, char** argv) {
     return options;
 }
 
-void run_batch(int width, std::int32_t batch_size, const Options& options,
-               const Tensor& norm_weight, const Tensor& base_kernel,
-               const Weight& projection_weight, DeviceBuffer& residual_storage,
+void run_batch(const char* format, int width, std::int32_t batch_size,
+               const Options& options, const Tensor& norm_weight,
+               const Tensor& base_kernel, const Weight& projection_weight,
+               DeviceBuffer& residual_storage,
                DeviceBuffer& prepared_storage, DeviceBuffer& finish_storage,
                WorkspaceArena& workspace, DeviceBuffer& flush, cudaStream_t stream) {
     const std::int32_t tokens = width * batch_size;
@@ -95,9 +116,10 @@ void run_batch(int width, std::int32_t batch_size, const Options& options,
     const double projection_flops = 2.0 * kCoefficientRows * kHidden * static_cast<double>(tokens);
     const double effective_tflops = projection_flops / seconds / 1.0e12;
     const std::size_t workspace_bytes = workspace.peak_used();
-    std::printf("%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%zu,%zu\n", width, batch_size, tokens,
-                timing.median_us, timing.min_us, timing.p95_us, effective_tflops, workspace_bytes,
-                graph.nodes());
+    std::printf("%s,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%zu,%zu\n",
+                format, width, batch_size, tokens,
+                timing.median_us, timing.min_us, timing.p95_us,
+                effective_tflops, workspace_bytes, graph.nodes());
 }
 
 } // namespace
@@ -113,7 +135,17 @@ int main(int argc, char** argv) {
         DeviceBuffer residual = make_bf16(static_cast<std::size_t>(kHidden) * kMaximumWidth * 8);
         DeviceBuffer norm     = make_bf16(kHidden);
         DeviceBuffer base     = make_bf16(static_cast<std::size_t>(kHidden) * kTaps * kSides);
-        DirectBf16Weight projection = make_direct_bf16_weight(kCoefficientRows, kHidden, 0x31U);
+        DirectBf16Weight projection_bf16 =
+            make_direct_bf16_weight(kCoefficientRows, kHidden, 0x31U);
+
+        PackedQuantizedWeight projection_q6 =
+            make_row_split_weight(
+                QType::Q6G64_F16S,
+                kCoefficientRows,
+                kHidden,
+                kHidden,
+                QuantizedWeightFill{0x31, 0xa5, 0x3c00});
+
         DeviceBuffer prepared = make_zeros(static_cast<std::size_t>(kHidden) * kMaximumWidth * 8 *
                                            sizeof(std::uint16_t));
         DeviceBuffer finish = make_zeros(static_cast<std::size_t>(kGroups) * kTaps * kMaximumWidth *
@@ -127,14 +159,35 @@ int main(int argc, char** argv) {
 
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-        std::printf("W,B,T,median_us,min_us,p95_us,effective_projection_tflops,workspace_bytes,"
-                    "graph_nodes\n");
+        std::printf(
+            "format,W,B,T,median_us,min_us,p95_us,"
+            "effective_projection_tflops,workspace_bytes,graph_nodes\n");
+
         for (int width = 2; width <= 16; ++width) {
             if (options.width && options.width != width) continue;
+
             for (std::int32_t batch_size = 1; batch_size <= 8; ++batch_size) {
                 if (options.batch && options.batch != batch_size) continue;
-                run_batch(width, batch_size, options, norm_weight, base_kernel, projection.weight,
-                          residual, prepared, finish, workspace, flush, stream);
+
+                if (options.format == Format::Bf16 ||
+                    options.format == Format::Both) {
+                    run_batch(
+                        "BF16", width, batch_size, options,
+                        norm_weight, base_kernel,
+                        projection_bf16.weight,
+                        residual, prepared, finish,
+                        workspace, flush, stream);
+                }
+
+                if (options.format == Format::Q6 ||
+                    options.format == Format::Both) {
+                    run_batch(
+                        "Q6", width, batch_size, options,
+                        norm_weight, base_kernel,
+                        projection_q6.weight,
+                        residual, prepared, finish,
+                        workspace, flush, stream);
+                }
             }
         }
         CUDA_CHECK(cudaStreamDestroy(stream));

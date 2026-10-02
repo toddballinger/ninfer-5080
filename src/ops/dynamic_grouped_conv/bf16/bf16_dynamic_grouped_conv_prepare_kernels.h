@@ -16,4 +16,7 @@ void bf16_dynamic_grouped_conv_prepare_reduce_launch(DynamicConvPrepareRoute rou
                                                      const Tensor& base, const float* partial,
                                                      Tensor& prepared, Tensor& finish,
                                                      cudaStream_t stream);
+void bf16_dynamic_grouped_conv_prepare_materialized_reduce_launch(
+    const Tensor& base, const Tensor& projected, Tensor& prepared, Tensor& finish,
+    cudaStream_t stream);
 } // namespace ninfer::ops::detail

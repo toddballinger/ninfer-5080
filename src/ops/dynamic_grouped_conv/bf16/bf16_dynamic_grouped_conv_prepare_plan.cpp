@@ -1,5 +1,6 @@
 #include "ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_plan.h"
 #include "ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_kernels.h"
+#include "ninfer/ops/linear.h"
 #include "ninfer/ops/rmsnorm.h"
 #include <algorithm>
 #include <stdexcept>
@@ -17,15 +18,51 @@ std::size_t capacity(DynamicConvPrepareRoute route, int tokens) {
     return static_cast<std::size_t>(1280) * tokens * route.split_k * sizeof(float);
 }
 
-void execute(DynamicConvPrepareRoute route, const Tensor& residual, const Tensor& norm, float eps,
-             const Tensor& base, const Weight& weight, Tensor& prepared, Tensor& finish,
-             WorkspaceArena& workspace, cudaStream_t stream) {
+void execute_bf16(DynamicConvPrepareRoute route, const Tensor& residual,
+                  const Tensor& norm, float eps, const Tensor& base,
+                  const Weight& weight, Tensor& prepared, Tensor& finish,
+                  WorkspaceArena& workspace, cudaStream_t stream) {
     auto scope       = workspace.scope();
     const int tokens = residual.ne[1] * residual.ne[2];
-    float* partial   = static_cast<float*>(workspace.alloc_bytes(capacity(route, tokens)).data);
+
+    float* partial =
+        static_cast<float*>(
+            workspace.alloc_bytes(capacity(route, tokens)).data);
+
     rmsnorm(residual, norm, eps, false, prepared, stream);
-    bf16_dynamic_grouped_conv_prepare_partial_launch(route, prepared, weight, partial, stream);
-    bf16_dynamic_grouped_conv_prepare_reduce_launch(route, base, partial, prepared, finish, stream);
+
+    bf16_dynamic_grouped_conv_prepare_partial_launch(
+        route, prepared, weight, partial, stream);
+
+    bf16_dynamic_grouped_conv_prepare_reduce_launch(
+        route, base, partial, prepared, finish, stream);
+}
+
+void execute_q6(const Tensor& residual, const Tensor& norm, float eps,
+                const Tensor& base, const Weight& weight,
+                Tensor& prepared, Tensor& finish,
+                WorkspaceArena& workspace, cudaStream_t stream) {
+    auto scope       = workspace.scope();
+    const int tokens = residual.ne[1] * residual.ne[2];
+
+    DeviceSpan projected_storage =
+        workspace.alloc_bytes(
+            static_cast<std::size_t>(1280) * tokens *
+            sizeof(std::uint16_t));
+
+    Tensor projected(
+        projected_storage.data, DType::BF16, {1280, tokens});
+
+    rmsnorm(residual, norm, eps, false, prepared, stream);
+
+    linear(
+        prepared.view({5120, tokens}),
+        weight,
+        projected,
+        stream);
+
+    bf16_dynamic_grouped_conv_prepare_materialized_reduce_launch(
+        base, projected, prepared, finish, stream);
 }
 } // namespace
 
@@ -46,7 +83,22 @@ void bf16_dynamic_grouped_conv_prepare_dispatch(const Tensor& residual, const Te
                                                 float eps, const Tensor& base, const Weight& weight,
                                                 Tensor& prepared, Tensor& finish,
                                                 WorkspaceArena& workspace, cudaStream_t stream) {
-    execute(resolve_route(residual.ne[1] * residual.ne[2]), residual, norm, eps, base, weight,
+    if (weight.qtype == QType::BF16_CTRL) {
+        execute_bf16(
+            resolve_route(residual.ne[1] * residual.ne[2]),
+            residual, norm, eps, base, weight,
             prepared, finish, workspace, stream);
+        return;
+    }
+
+    if (weight.qtype == QType::Q6G64_F16S) {
+        execute_q6(
+            residual, norm, eps, base, weight,
+            prepared, finish, workspace, stream);
+        return;
+    }
+
+    throw std::logic_error(
+        "dynamic grouped conv prepare: unsupported projection qtype");
 }
 } // namespace ninfer::ops::detail

@@ -72,6 +72,11 @@ bool Binder::contains(std::string_view name) const noexcept {
     return reader_.find(name) != nullptr;
 }
 
+
+const ObjectDescriptor* Binder::find(std::string_view name) const noexcept {
+    return reader_.find(name);
+}
+
 const ObjectDescriptor& Binder::descriptor(ObjectHandle handle) const {
     if (handle.index >= reader_.objects().size()) {
         throw ArtifactError("artifact object handle is out of range");

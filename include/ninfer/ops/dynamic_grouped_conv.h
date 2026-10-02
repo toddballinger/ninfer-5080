@@ -39,7 +39,7 @@ namespace ninfer::ops {
  * Logical shapes / supported domain:
  *   residual/prepared are contiguous BF16 [5120,W,B], W is in [2,16] and B in [1,8];
  *   norm_weight is contiguous BF16 [5120]. base_kernel is the runtime view BF16 [5120,2,2] with
- * axes [channel,tap,side]; kernel_projection_weight is contiguous BF16_CTRL [1280,5120]; and
+ * axes [channel,tap,side]; kernel_projection_weight is either contiguous BF16_CTRL or RowSplit Q6G64_F16S [1280,5120]; and
  *   finish_delta is contiguous BF16 [320,2,W,B]. eps is positive and finite. Position zero has
  *   no previous-tap contribution: the Op never reads another request or an earlier round.
  *

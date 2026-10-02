@@ -423,6 +423,47 @@ DFlash2Plan bind_dflash2(artifact::Binder& binder, artifact::TensorPlacement pla
         return artifact::bind_tensor(binder, name, format, shape, placement);
     };
 
+    const auto bind_dynamic_conv_projection =
+        [&](std::string_view name) -> WeightPlan {
+            const artifact::ObjectDescriptor* object = binder.find(name);
+            if (object == nullptr) {
+                throw artifact::ArtifactError(
+                    "required artifact object is missing: " +
+                    std::string(name));
+            }
+
+            const auto* tensor =
+                std::get_if<artifact::TensorDescriptor>(object);
+
+            if (tensor == nullptr) {
+                throw artifact::ArtifactError(
+                    "dynamic-conv kernel projection is not a tensor: " +
+                    std::string(name));
+            }
+
+            NumericFormat format{};
+
+            if (tensor->format == NumericFormat::BF16) {
+                format = NumericFormat::BF16;
+            } else if (
+                tensor->format == NumericFormat::Q6G64_F16S
+            ) {
+                format = NumericFormat::Q6G64_F16S;
+            } else {
+                throw artifact::ArtifactError(
+                    "dynamic-conv kernel projection must be "
+                    "BF16 or Q6G64_F16S: " +
+                    std::string(name));
+            }
+
+            return bind_weight(
+                binder,
+                name,
+                format,
+                {1280, 5120},
+                placement);
+        };
+
     DFlash2Plan out;
     out.feature_projection = bind_weight(binder, "dflash2/feature_projection",
                                          NumericFormat::W8G32_F16S, {5120, 25600}, placement);
@@ -434,8 +475,8 @@ DFlash2Plan bind_dflash2(artifact::Binder& binder, artifact::TensorPlacement pla
         target.attention_conv.base_kernel =
             bind_tensor(prefix + "attention_conv/base_kernel", NumericFormat::BF16, {2, 2, 5120});
         target.attention_conv.kernel_projection =
-            bind_weight(binder, prefix + "attention_conv/kernel_projection", NumericFormat::BF16,
-                        {1280, 5120}, placement);
+            bind_dynamic_conv_projection(
+                prefix + "attention_conv/kernel_projection");
         target.query_key_value = bind_weight(binder, prefix + "attention/query_key_value",
                                              NumericFormat::W8G32_F16S, {6144, 5120}, placement);
         target.query_norm =
@@ -448,8 +489,8 @@ DFlash2Plan bind_dflash2(artifact::Binder& binder, artifact::TensorPlacement pla
         target.mlp_conv.base_kernel =
             bind_tensor(prefix + "mlp_conv/base_kernel", NumericFormat::BF16, {2, 2, 5120});
         target.mlp_conv.kernel_projection =
-            bind_weight(binder, prefix + "mlp_conv/kernel_projection", NumericFormat::BF16,
-                        {1280, 5120}, placement);
+            bind_dynamic_conv_projection(
+                prefix + "mlp_conv/kernel_projection");
         target.gate_up = bind_weight(binder, prefix + "mlp/gate_up", NumericFormat::W8G32_F16S,
                                      {34816, 5120}, placement);
         target.down    = bind_weight(binder, prefix + "mlp/down", NumericFormat::W8G32_F16S,

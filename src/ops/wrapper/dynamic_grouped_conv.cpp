@@ -35,18 +35,63 @@ void require_tensor(const Tensor& tensor, DType dtype, std::int32_t d0, std::int
 }
 
 void require_kernel_projection_weight(const Weight& weight) {
-    constexpr std::uint64_t kPayloadBytes =
+    constexpr std::uint64_t kBf16PayloadBytes =
         static_cast<std::uint64_t>(kCoefficientRows) * kHidden * sizeof(std::uint16_t);
-    if (weight.qtype != QType::BF16_CTRL || weight.layout != QuantLayout::Contiguous ||
-        weight.payload_bytes < kPayloadBytes || weight.high_plane_bytes != 0 || weight.ndim != 2 ||
-        weight.n != kCoefficientRows || weight.k != kHidden ||
-        weight.shape[0] != kCoefficientRows || weight.shape[1] != kHidden ||
-        weight.padded_shape[0] != kCoefficientRows || weight.padded_shape[1] != kHidden ||
-        weight.qhigh != nullptr || weight.scales != nullptr || weight.group_size != 0 ||
-        weight.group != 0 || !aligned_to(weight.qdata, 16)) {
-        throw std::invalid_argument(
-            "dynamic grouped conv prepare: invalid kernel_projection_weight");
+
+    if (weight.qtype == QType::BF16_CTRL) {
+        if (weight.layout != QuantLayout::Contiguous ||
+            weight.payload_bytes < kBf16PayloadBytes ||
+            weight.high_plane_bytes != 0 || weight.ndim != 2 ||
+            weight.n != kCoefficientRows || weight.k != kHidden ||
+            weight.shape[0] != kCoefficientRows || weight.shape[1] != kHidden ||
+            weight.padded_shape[0] != kCoefficientRows ||
+            weight.padded_shape[1] != kHidden ||
+            weight.qhigh != nullptr || weight.scales != nullptr ||
+            weight.group_size != 0 || weight.group != 0 ||
+            !aligned_to(weight.qdata, 16)) {
+            throw std::invalid_argument(
+                "dynamic grouped conv prepare: invalid BF16 kernel_projection_weight");
+        }
+        return;
     }
+
+    if (weight.qtype == QType::Q6G64_F16S) {
+        constexpr std::uint64_t kGroupsPerRow = kHidden / 64U;
+        constexpr std::uint64_t kCodeBytes =
+            static_cast<std::uint64_t>(kCoefficientRows) * kGroupsPerRow * 32U;
+        constexpr std::uint64_t kHighBytes =
+            static_cast<std::uint64_t>(kCoefficientRows) * kGroupsPerRow * 16U;
+        constexpr std::uint64_t kScaleBytes =
+            static_cast<std::uint64_t>(kCoefficientRows) * kGroupsPerRow *
+            sizeof(std::uint16_t);
+        constexpr std::uint64_t kPayloadBytes =
+            kCodeBytes + kHighBytes + kScaleBytes;
+
+        if (weight.layout != QuantLayout::RowSplit ||
+            weight.scale_dtype != DType::FP16 ||
+            weight.payload_bytes < kPayloadBytes ||
+            weight.high_plane_bytes != kHighBytes ||
+            weight.ndim != 2 ||
+            weight.n != kCoefficientRows || weight.k != kHidden ||
+            weight.shape[0] != kCoefficientRows ||
+            weight.shape[1] != kHidden ||
+            weight.shape[2] != 1 || weight.shape[3] != 1 ||
+            weight.padded_shape[0] != kCoefficientRows ||
+            weight.padded_shape[1] != kHidden ||
+            weight.padded_shape[2] != 1 || weight.padded_shape[3] != 1 ||
+            weight.group_size != 64 || weight.group != 64 ||
+            weight.qhigh == nullptr || weight.scales == nullptr ||
+            !aligned_to(weight.qdata, 16) ||
+            !aligned_to(weight.qhigh, 16) ||
+            !aligned_to(weight.scales, 16)) {
+            throw std::invalid_argument(
+                "dynamic grouped conv prepare: invalid Q6 kernel_projection_weight");
+        }
+        return;
+    }
+
+    throw std::invalid_argument(
+        "dynamic grouped conv prepare: unsupported kernel_projection_weight qtype");
 }
 
 std::uint64_t required_w8_payload_bytes(std::int32_t input_rows) {
@@ -121,13 +166,17 @@ void require_nonoverlap(const Tensor& residual, const Tensor& norm_weight,
                         const Tensor& base_kernel, const Weight& kernel_projection_weight,
                         const Tensor& prepared, const Tensor& finish_delta,
                         const WorkspaceArena& workspace) {
-    constexpr std::size_t kWeightBytes =
-        static_cast<std::size_t>(kCoefficientRows) * kHidden * sizeof(std::uint16_t);
+    const std::size_t weight_bytes =
+        kernel_projection_weight.qtype == QType::BF16_CTRL
+            ? static_cast<std::size_t>(kCoefficientRows) * kHidden *
+                  sizeof(std::uint16_t)
+            : static_cast<std::size_t>(kernel_projection_weight.payload_bytes);
+
     const std::array<Range, 7> ranges{{
         {residual.data, residual.bytes(), "residual"},
         {norm_weight.data, norm_weight.bytes(), "norm_weight"},
         {base_kernel.data, base_kernel.bytes(), "base_kernel"},
-        {kernel_projection_weight.qdata, kWeightBytes, "kernel_projection_weight"},
+        {kernel_projection_weight.qdata, weight_bytes, "kernel_projection_weight"},
         {prepared.data, prepared.bytes(), "prepared"},
         {finish_delta.data, finish_delta.bytes(), "finish_delta"},
         {workspace.base(), workspace.capacity(), "workspace"},

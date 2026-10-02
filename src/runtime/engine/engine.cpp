@@ -4,8 +4,10 @@
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/types.h"
 #include "runtime/engine/concurrent_executor.h"
+#include "runtime/engine/engine_boundary_observer_registry.h"
 #include "targets/registry.h"
 
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -13,6 +15,51 @@
 #include <variant>
 
 namespace ninfer {
+namespace {
+struct ObserverState {
+    std::mutex mutex;
+    BoundaryObserverRegistry::Token next_token = 1;
+    BoundaryObserverRegistry::Token active_token = 0;
+    std::shared_ptr<const BoundaryObserverRegistry::Callback> callback;
+};
+
+ObserverState& observer_state() {
+    static ObserverState state;
+    return state;
+}
+} // namespace
+
+BoundaryObserverRegistry::Token BoundaryObserverRegistry::register_observer(Callback callback) {
+    if (!callback) { throw std::invalid_argument("boundary observer must not be empty"); }
+    auto owned = std::make_shared<const Callback>(std::move(callback));
+    auto& state = observer_state();
+    std::lock_guard lock(state.mutex);
+    if (state.active_token != 0) {
+        throw std::invalid_argument("boundary observer already registered");
+    }
+    if (state.next_token == 0) { throw std::overflow_error("boundary observer tokens exhausted"); }
+    const Token token = state.next_token++;
+    state.callback = std::move(owned);
+    state.active_token = token;
+    return token;
+}
+
+std::shared_ptr<const BoundaryObserverRegistry::Callback> BoundaryObserverRegistry::snapshot() {
+    auto& state = observer_state();
+    std::lock_guard lock(state.mutex);
+    return state.callback;
+}
+
+void BoundaryObserverRegistry::unregister(Token token) {
+    auto& state = observer_state();
+    std::lock_guard lock(state.mutex);
+    if (token == 0 || token != state.active_token) {
+        throw std::invalid_argument("boundary observer token does not match active registration");
+    }
+    state.callback.reset();
+    state.active_token = 0;
+}
+
 namespace {
 
 runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefaults& defaults,
@@ -25,6 +72,20 @@ runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefau
     resolved.stop                              = std::move(options.stop);
     resolved.output                            = options.output;
     return resolved;
+}
+
+// Installs the process-local M1 boundary-seam test observer (if one is
+// registered) onto an Engine-owned executor; no ownership transfer, no
+// public API, and no scheduler change: when nothing is registered the
+// seam remains inert (null observer => the seam emits nothing).
+void install_boundary_observer(
+    std::function<void(const runtime::BoundaryObservation&)>& executor_observer) {
+    auto callback = BoundaryObserverRegistry::snapshot();
+    if (callback) {
+        // The executor owns this shared snapshot independently of unregister().
+        executor_observer = [callback = std::move(callback)](
+                                const runtime::BoundaryObservation& o) { (*callback)(o); };
+    }
 }
 
 std::string context_capacity_error(std::uint32_t prompt_tokens, std::uint32_t max_context) {
@@ -147,12 +208,24 @@ public:
             [&](auto& target_ptr) -> Executor {
                 using Instance =
                     typename std::remove_reference_t<decltype(target_ptr)>::element_type;
+                // M1: install the private boundary-seam test observer (no-op when
+                // unregistered) on the Engine's own executor before any request can
+                // be submitted; the executor's worker then emits the post-commit
+                // seam records directly into it.
+                std::function<void(const runtime::BoundaryObservation&)> observer;
+                install_boundary_observer(observer);
                 if constexpr (std::is_same_v<Instance, targets::Qwen3_5_9BInstance>) {
-                    return std::make_unique<Executor9>(*target_ptr, options);
+                    auto executor = std::make_unique<Executor9>(*target_ptr, options);
+                    executor->boundary_observer(std::move(observer));
+                    return executor;
                 } else if constexpr (std::is_same_v<Instance, targets::Qwen3_6_27BInstance>) {
-                    return std::make_unique<Executor27>(*target_ptr, options);
+                    auto executor = std::make_unique<Executor27>(*target_ptr, options);
+                    executor->boundary_observer(std::move(observer));
+                    return executor;
                 } else {
-                    return std::make_unique<Executor35>(*target_ptr, options);
+                    auto executor = std::make_unique<Executor35>(*target_ptr, options);
+                    executor->boundary_observer(std::move(observer));
+                    return executor;
                 }
             },
             active);
