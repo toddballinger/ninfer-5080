@@ -105,9 +105,65 @@ All three winners remained token 198 across the timed runs. Exact Q equivalence 
 
 Post-review qualification direction:
 - retain these product and public-decision measurements; no identical rerun is required solely for the sub-percent differences;
-- add a focused already-warm MTP restoration regression before claiming retained-warm transition qualification;
 - benchmark the actual Q -> selected-path FORCE -> bridge -> warm-MTP transition in Phase 2;
 - keep older repetitive 118K corpora as historical/regression evidence only; the mixed `workflow-118k-v1` corpus remains the forward canonical long-context benchmark.
+
+### Issue #55 retained-warm qualification and exact-hit MTP bridge repair
+
+Astra's retained-warm follow-up exposed a pre-existing exact-hit MTP bridge defect. The persistent `prefill_hidden` layout is intentionally `[hidden,1]`, but the AR proposal loop in `mtp_bridge_and_propose()` indexed additional columns of that tensor when the proposal extent exceeded one. The resulting failure was:
+
+```text
+slice range out of bounds: dim=1 start=1 len=1 extent=1 shape=[5120,1,1,1]
+```
+
+The narrow repair keeps the persistent one-column layout and moves the autoregressive MTP proposal hidden output to transient WorkspaceArena BF16 `[hidden,1]` scratch. The qualified repair checkpoint is:
+
+```text
+REVIEWED_PHASE1_SHA=6a1e955b433c5d3209de7141aba58b57918870b3
+DOCS_PARENT_SHA=433fad0e1417808d8296c6d303d6edc5c442c546
+QUALIFIED_REPAIR_SHA=b393ce3b7c676d8185f9c41438940accd2415359
+```
+
+A retained real-GPU regression now proves one and two repeated single-path probes on an already-warm MTP sequence:
+
+```text
+ONE_PROBE_RC=0
+TWO_PROBE_RC=0
+PROBE_COMMITTED_DECODE_DELTA=0
+PROBE_DECODE_ROUNDS_DELTA=0
+CONTROL_VS_PROBE_CONTINUATION_TOKEN_MATCH=YES
+CONTROL_VS_PROBE_SPECULATIVE_STATS_MATCH=YES
+POST_PROBE_WARM_REUSE=YES
+TRUE_REPEAT_RETAINED_WARM=PASS
+```
+
+The proper compiled PR13 parent-conditioned shared-wave fixture was then qualified on the repaired checkpoint. Each of two repeated waves preserved `AppendAtFrontier` reuse, produced identical decision results, avoided committed decode, and resumed warm MTP with exact continuation parity against the no-probe control:
+
+```text
+WAVE_0_REPLAY_EQUIVALENT_SUFFIX_TOKENS=64
+WAVE_0_EXECUTED_SUFFIX_TOKENS=35
+WAVE_0_SAVED_SUFFIX_TOKENS=29
+
+WAVE_1_REPLAY_EQUIVALENT_SUFFIX_TOKENS=64
+WAVE_1_EXECUTED_SUFFIX_TOKENS=35
+WAVE_1_SAVED_SUFFIX_TOKENS=29
+
+WAVE_0_SECOND_CHILD_LOGICAL_SUFFIX=32
+WAVE_0_SECOND_CHILD_EXECUTED_SUFFIX=3
+WAVE_1_SECOND_CHILD_LOGICAL_SUFFIX=32
+WAVE_1_SECOND_CHILD_EXECUTED_SUFFIX=3
+
+WAVE_REPEAT_DECISION_MATCH=YES
+WAVE_COMMITTED_DECODE_DELTA=0
+WAVE_DECODE_ROUNDS_DELTA=0
+WAVE_DECODE_ROW_ROUNDS_DELTA=0
+CONTROL_VS_WAVE_CONTINUATION_TOKEN_MATCH=YES
+CONTROL_VS_WAVE_SPECULATIVE_STATS_MATCH=YES
+POST_WAVE_WARM_REUSE=YES
+COMPILED_SHARED_WAVE_RETAINED_WARM=PASS
+```
+
+This closes the main retained-warm single-path and parent-conditioned/shared-frontier qualification requested by Astra. It does **not** qualify selected-path FORCE/bridge integration; that remains Phase 2. Before Phase 2, targeted restoration/error invalidation and the remaining inherited PR13 MTP-configured edge cases must still be dispositioned.
 
 
 The Q3/A8 large-prefill schedule changed from:
