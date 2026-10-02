@@ -235,7 +235,8 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
           workspace_storage.capacity()}),
       round_host(sizeof(TokenId)),
       ordinary_host(
-          plan.speculative_backend == SpeculativeBackend::None
+          (plan.speculative_backend == SpeculativeBackend::None ||
+           plan.speculative_backend == SpeculativeBackend::Mtp)
               ? std::make_optional<PinnedHostBuffer>(sizeof(qwen3_6::OrdinaryDecodeIngress) +
                                                      sizeof(qwen3_6::OrdinaryDecodeEgress))
               : std::nullopt),
@@ -348,8 +349,11 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
     if (io.mtp_decode.has_value() != (speculative_backend == SpeculativeBackend::Mtp)) {
         throw std::logic_error("MTP decode frame does not match the sequence plan");
     }
-    if (io.ordinary.has_value() != (speculative_backend == SpeculativeBackend::None)) {
-        throw std::logic_error("ordinary decode frame does not match the sequence plan");
+    const bool has_ordinary_target_frame =
+        speculative_backend == SpeculativeBackend::None ||
+        speculative_backend == SpeculativeBackend::Mtp;
+    if (io.ordinary.has_value() != has_ordinary_target_frame) {
+        throw std::logic_error("ordinary target frame does not match the sequence plan");
     }
     if (io.dflash_prefill.has_value() != (is_masked_draft_backend(speculative_backend))) {
         throw std::logic_error("DFlash prefill scratch does not match the sequence plan");
@@ -1341,9 +1345,13 @@ ProgramImplCore::decision_probe_lane(
         }
     }
 
-    if (speculative_backend != SpeculativeBackend::None || !io.ordinary) {
+    if ((speculative_backend != SpeculativeBackend::None &&
+         speculative_backend != SpeculativeBackend::Mtp) ||
+        !io.ordinary) {
         throw std::logic_error(
-            "constrained decision execution requires the ordinary target backend (SpeculativeBackend::None)");
+            "constrained decision target probing requires an ordinary target "
+            "frame and supports only SpeculativeBackend::None or "
+            "SpeculativeBackend::Mtp");
     }
 
     if (lane >= max_concurrency) {
@@ -1417,6 +1425,16 @@ ProgramImplCore::decision_probe_lane(
     const std::uint32_t original_entitlement =
         sequence.kv->text.page_entitlement();
 
+    // Decision probing is target-only. Preserve speculative backend KV
+    // state exactly while temporarily extending target text KV.
+    const std::uint32_t preserved_backend_valid =
+        backend_kv_valid(sequence);
+
+    const std::uint32_t preserved_backend_entitlement =
+        sequence.kv->backend
+            ? sequence.kv->backend->page_entitlement()
+            : 0U;
+
     if (required_pages > decoder->text_kv.pool().logical_page_capacity()) {
         throw std::invalid_argument(
             "decision probe requires more KV pages than the pool permits");
@@ -1447,14 +1465,17 @@ ProgramImplCore::decision_probe_lane(
                 state_slot,
                 device.stream);
 
-            trim_sequence_kv(sequence, base, 0);
+            trim_sequence_kv(
+                sequence,
+                base,
+                preserved_backend_valid);
 
             if (sequence.kv->text.page_entitlement() !=
                 original_entitlement) {
                 resize_sequence_kv_entitlement(
                     sequence,
                     original_entitlement,
-                    0);
+                    preserved_backend_entitlement);
             }
 
             if (kv_bound) {
@@ -1498,7 +1519,7 @@ ProgramImplCore::decision_probe_lane(
             resize_sequence_kv_entitlement(
                 sequence,
                 required_pages,
-                0);
+                preserved_backend_entitlement);
         }
 
         bind_sequence_kv(sequence);
@@ -1617,11 +1638,14 @@ ProgramImplCore::decision_probe_wave_lane(
     std::span<const TokenId> shared_prefix_tokens,
     std::span<const qwen3_6::DecisionWaveProbeSpec> probes) {
 
-    if (speculative_backend != SpeculativeBackend::None ||
+    if ((speculative_backend != SpeculativeBackend::None &&
+         speculative_backend != SpeculativeBackend::Mtp) ||
         !io.ordinary) {
 
         throw std::logic_error(
-            "shared decision wave requires the ordinary target backend (SpeculativeBackend::None)");
+            "shared decision target probing requires an ordinary target "
+            "frame and supports only SpeculativeBackend::None or "
+            "SpeculativeBackend::Mtp");
     }
 
     if (lane >= max_concurrency) {
@@ -1804,6 +1828,16 @@ ProgramImplCore::decision_probe_wave_lane(
     const std::uint32_t original_entitlement =
         sequence.kv->text.page_entitlement();
 
+    // Decision probing is target-only. Preserve speculative backend KV
+    // state exactly while temporarily extending target text KV.
+    const std::uint32_t preserved_backend_valid =
+        backend_kv_valid(sequence);
+
+    const std::uint32_t preserved_backend_entitlement =
+        sequence.kv->backend
+            ? sequence.kv->backend->page_entitlement()
+            : 0U;
+
     if (required_pages >
         decoder->text_kv.pool()
             .logical_page_capacity()) {
@@ -1872,7 +1906,7 @@ ProgramImplCore::decision_probe_wave_lane(
             trim_sequence_kv(
                 sequence,
                 base,
-                0);
+                preserved_backend_valid);
 
             if (sequence.kv->text
                     .page_entitlement() !=
@@ -1881,7 +1915,7 @@ ProgramImplCore::decision_probe_wave_lane(
                 resize_sequence_kv_entitlement(
                     sequence,
                     original_entitlement,
-                    0);
+                    preserved_backend_entitlement);
             }
 
             if (kv_bound) {
@@ -2037,7 +2071,7 @@ ProgramImplCore::decision_probe_wave_lane(
             resize_sequence_kv_entitlement(
                 sequence,
                 required_pages,
-                0);
+                preserved_backend_entitlement);
         }
 
         bind_sequence_kv(
@@ -2131,7 +2165,7 @@ ProgramImplCore::decision_probe_wave_lane(
             trim_sequence_kv(
                 sequence,
                 temporary_frontier,
-                0);
+                preserved_backend_valid);
 
             device.synchronize();
 

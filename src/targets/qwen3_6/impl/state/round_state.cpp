@@ -52,7 +52,12 @@ RoundStateLayout begin_round_state_layout(LayoutBuilder& builder, const RoundSta
     validate_spec(spec);
     RoundStateLayout layout;
     layout.spec = spec;
-    if (spec.backend == SpeculativeBackend::None) {
+    // Constrained semantic decisions remain target-authoritative under MTP.
+    // Retain the compact ordinary target frame so decision probes can execute
+    // reversible target-only suffix traversals without involving MTP proposal
+    // or acceptance semantics.
+    if (spec.backend == SpeculativeBackend::None ||
+        spec.backend == SpeculativeBackend::Mtp) {
         OrdinaryDecodeStateLayout& ordinary = layout.ordinary.emplace();
         ordinary.ingress =
             builder.add(sizeof(OrdinaryDecodeIngress), 256, "ordinary decode ingress");

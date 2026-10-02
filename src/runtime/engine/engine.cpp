@@ -39,10 +39,12 @@ std::string context_capacity_error(std::uint32_t prompt_tokens, std::uint32_t ma
 }
 
 void require_decision_execution_backend(const EngineOptions& options) {
-    if (options.speculative.backend != SpeculativeBackend::None) {
+    if (options.speculative.backend != SpeculativeBackend::None &&
+        options.speculative.backend != SpeculativeBackend::Mtp) {
         throw std::invalid_argument(
-            "finite decision execution currently requires "
-            "EngineOptions::speculative.backend == SpeculativeBackend::None");
+            "finite decision execution currently supports only "
+            "SpeculativeBackend::None or SpeculativeBackend::Mtp; "
+            "decision scoring remains target-authoritative");
     }
 }
 
@@ -2706,7 +2708,9 @@ DecisionCapacitySummary Engine::decision_capacity() const {
 
     out.executable =
         impl_->options.speculative.backend ==
-            SpeculativeBackend::None;
+            SpeculativeBackend::None ||
+        impl_->options.speculative.backend ==
+            SpeculativeBackend::Mtp;
 
     const MemorySummary memory =
         memory_summary();
