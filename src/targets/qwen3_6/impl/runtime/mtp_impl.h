@@ -52,10 +52,20 @@ void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
 
     Tensor ar_position = state.execution.io.mtp->position.slice(0, 0, 1);
     ops::set_i32_scalar(ar_position, position + 1, state.execution.device.stream);
+
+    // prefill_hidden is intentionally persistent [hidden,1].
+    // Autoregressive proposal construction needs a transient hidden
+    // output column, so keep that lifetime in WorkspaceArena rather
+    // than indexing nonexistent persistent columns.
+    auto ar_hidden_scope = state.execution.work.scope();
+    Tensor next_hidden =
+        state.execution.work.alloc(
+            DType::BF16,
+            {TextConfig::hidden, 1});
+
     for (int i = 1; i < static_cast<int>(state.mtp_proposal_extent); ++i) {
         Tensor previous_token = state.execution.io.mtp->draft_tokens.slice(0, i - 1, 1);
         Tensor next_draft     = state.execution.io.mtp->draft_tokens.slice(0, i, 1);
-        Tensor next_hidden    = state.execution.prefill_hidden.slice(1, i, 1);
         const auto visible    = static_cast<std::uint32_t>(position + i + 1);
         const ops::GqaExecutionEnvelope envelope{visible, visible};
         card.mtp_forward_ar_step(previous_token, state.execution.io.mtp->ar_hidden, ar_position,
