@@ -26,6 +26,7 @@ Canonical contract:
 | Max context | 131,072 |
 | KV capacity | 131,072 |
 | KV dtype | Q4 group64 |
+| Prefill chunk | **1792** |
 | MTP | 3 |
 | CUDA Graph | enabled |
 | Host-mapped embeddings | enabled |
@@ -41,6 +42,73 @@ Final old-vs-new qualification used the same model artifact, corpus, benchmark b
 | Planned slack | ~843.17 MiB | **~727.23 MiB** | -115.94 MiB |
 
 The larger prefill workspace is intentional and remains inside the validated RTX 5080 memory envelope. The new configuration retains more than 700 MiB planned slack at full 131,072 Q4 KV capacity.
+
+
+## Issue #55 Phase-1 regression evidence — hybrid semantic decision probing
+
+Reviewed candidate:
+
+```text
+BASE=3f5da5beadf95b9a14adc942a1bf2a49b93b808c
+CANDIDATE=6a1e955b433c5d3209de7141aba58b57918870b3
+ASTRA_PHASE1=PASS_WITH_REQUIRED_FOLLOWUPS
+PHASE_BOUNDARY=OPTION_B
+```
+
+This checkpoint extends the existing PR #13 constrained-decision machinery so reversible target-authoritative decision probing can run on an MTP-configured Engine. It does **not** implement selected-path FORCE/bridge/warm-resume; those transitions are Phase 2.
+
+The product regression gate used the canonical mixed 118,001-token workflow and the current v1.5 winning profile:
+
+```text
+fixture=bench/fixtures/workflow-118k-v1/ninfer_bench_118001.ids
+fixture_sha256=5b08da2c7b7ea5cafad2fab5699dccbcbce86040d8a37219b8c21f094d1d1eb7
+test=pp118001+tg2048
+max_context=131072
+kv_capacity=131072
+kv_dtype=q4-group64
+prefill_chunk=1792
+mtp_draft_tokens=3
+proposal_head=optimized
+cuda_graph=on
+embedding_host=yes
+warmup=1 per invocation
+measured_repetitions=2 per invocation
+run_order=BASE,CANDIDATE,CANDIDATE,BASE
+total_measured_repetitions_per_side=4
+```
+
+Measured medians:
+
+| Metric | Base | Candidate | Delta |
+|---|---:|---:|---:|
+| Prefill | 1377.811 tok/s | 1376.401 tok/s | -0.1023% |
+| Sustained decode | 111.811 tok/s | 111.868 tok/s | +0.0510% |
+| Total time | 103.965 s | 104.058 s | +0.0895% |
+| MTP acceptance | 0.7743506494 | 0.7743506494 | unchanged |
+| Acceptance length | 3.323051948 | 3.323051948 | unchanged |
+| Workspace peak | 243,267,584 B | 243,267,584 B | 0 |
+| Allocator workspace peak | 243,267,584 B | 243,267,584 B | 0 |
+| Available after startup | 488,570,880 B | 488,570,880 B | 0 |
+| Planned slack | 406,041,344 B | 405,533,696 B | -507,648 B |
+
+Interpretation: this limited matched A/B shows **no practically apparent product-path regression**. The four measured repetitions per side are regression evidence, not a statistical-equivalence claim. The published v1.5 result (1374.383 tok/s prefill / 112.215 tok/s sustained decode) remains a contextual reference rather than the A/B baseline.
+
+A candidate-only public `Engine::decide()` timing check compared `SpeculativeBackend::None` with `SpeculativeBackend::Mtp` using the same three-field A1/B/A2 oracle shape, with prompt preparation outside the timed interval, prefix reuse disabled, and CUDA Graph disabled:
+
+| Metric | None | MTP | Delta |
+|---|---:|---:|---:|
+| Median | 290.396 ms | 293.394 ms | +1.0322% |
+| P95 | 290.828 ms | 293.678 ms | +0.9801% |
+| Mean | 290.361 ms | 293.399 ms | +1.0461% |
+
+All three winners remained token 198 across the timed runs. Exact Q equivalence is established by the separate real-model ordinary-vs-MTP oracle, which observed max absolute Q error 0 on the qualified fixture.
+
+Post-review qualification direction:
+- retain these product and public-decision measurements; no identical rerun is required solely for the sub-percent differences;
+- add a focused already-warm MTP restoration regression before claiming retained-warm transition qualification;
+- benchmark the actual Q -> selected-path FORCE -> bridge -> warm-MTP transition in Phase 2;
+- keep older repetitive 118K corpora as historical/regression evidence only; the mixed `workflow-118k-v1` corpus remains the forward canonical long-context benchmark.
+
 
 The Q3/A8 large-prefill schedule changed from:
 
