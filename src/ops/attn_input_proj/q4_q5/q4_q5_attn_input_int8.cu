@@ -44,7 +44,7 @@ void q4_q5_attn_input_int8_launch(const Tensor& x, const Weight& query_key_weigh
         make_job(query_key_weight, kQueryRows, kKvRows, k),
         make_job(gate_value_weight, kQueryRows, kKvRows, v),
     };
-    int8_proj_launch(x, jobs, 4, scratch, stream);
+    int8_proj_launch(x, jobs, 4, Int8ProjFamily::Attention, scratch, stream);
 }
 
 } // namespace ninfer::ops::detail

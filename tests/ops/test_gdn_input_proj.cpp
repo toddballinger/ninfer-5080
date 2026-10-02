@@ -1,5 +1,6 @@
 #include "ninfer/ops/gdn_input_proj.h"
 
+#include "ops/a8_projection_oracle.h"
 #include "ops/input_projection_test_common.h"
 
 #include <cuda_runtime.h>
@@ -98,6 +99,91 @@ int run_q4_q5() {
         failures += run_q4_q5_case(query_key, value_z_weight, tokens);
     }
 
+    return failures;
+}
+
+// Issue #18 M0: bounded Q4/Q5 AllowA8 oracle coverage for the wide (T=1792,
+// full 10240/6144-row) and narrow (T=1521) gdn qkv/z row schedules. The
+// independent CPU oracle verifies each projection's int8 A8 reference
+// bound; gross bound violations are failures.
+// Q4 and Q5 parents use distinct patterned-weight seeds; activation is
+// additionally re-seeded per weight type so the two fixture activations
+// differ.
+
+int run_q4_q5_allow_a8_case(DevicePackedWeight& qk, DevicePackedWeight& vz,
+                            std::int32_t tokens) {
+    constexpr std::int32_t kHidden     = 5120;
+    constexpr std::int32_t kQkRows     = 4096;
+    constexpr std::int32_t kValueRows  = 6144;
+    constexpr std::int32_t kQkvRows    = 10240;
+    constexpr std::int32_t kZRows      = 6144;
+    const std::vector<float> activation =
+        make_bf16_activation(kHidden, tokens,
+                             701U + tokens + (qk.host.weight.qtype == QType::Q4G64_F16S ? 0 : 1));
+    const std::vector<std::uint16_t> activation_bits = bf16_bits(activation);
+    DeviceBuffer device_activation                   = to_device(activation_bits);
+
+    GuardedBf16Tensor qkv(kQkvRows, tokens);
+    GuardedBf16Tensor z(kZRows, tokens);
+    Tensor x(device_activation.p, DType::BF16, {kHidden, tokens});
+    Tensor qkv_output   = qkv.tensor();
+    Tensor z_output     = z.tensor();
+
+    const std::size_t capacity =
+        ops::gdn_input_proj_workspace_capacity_bytes(5120, ops::LinearPolicy::AllowA8, tokens,
+                                                     tokens);
+    WorkspaceArena workspace(std::max<std::size_t>(capacity, 256));
+    ops::gdn_input_proj(x, qk.view(), vz.view(), qkv_output, z_output,
+                        ops::LinearPolicy::AllowA8, workspace, nullptr);
+    cuda_synchronize();
+
+    const std::string suffix = "A8 T=" + std::to_string(tokens);
+    int failures            = 0;
+    failures += qkv.verify_guards("gdn qkv" + suffix);
+    failures += qkv.verify_fully_written("gdn qkv" + suffix);
+    failures += z.verify_guards("gdn z" + suffix);
+    failures += z.verify_fully_written("gdn z" + suffix);
+    failures += verify_preserved("gdn x" + suffix, device_activation, activation_bits);
+    failures += qk.verify_preserved("gdn query/key" + suffix);
+    failures += vz.verify_preserved("gdn value/z" + suffix);
+
+    auto verify_oracle = [&](std::string_view role, const GuardedBf16Tensor& output,
+                            const DevicePackedWeight& parent, std::int32_t full_rows,
+                            std::int32_t row_offset, std::int32_t rows,
+                            std::int32_t weight_row_offset) {
+        const std::vector<double> actual =
+            gather_rows(output.values(), full_rows, row_offset, rows, tokens, 31);
+        a8_oracle::A8OracleMetrics m =
+            a8_oracle::compute_a8_oracle(parent.host, actual, activation, weight_row_offset, rows,
+                                         tokens);
+        const char* qtype =
+            (parent.host.weight.qtype == QType::Q4G64_F16S) ? "Q4" : "Q5";
+        const char* tile = (tokens == 1521) ? "Tail" : "Full";
+        std::printf("gdn %s %s A8 rows=%d T=%d tile=%s: %s", role.data(), qtype, rows, tokens,
+                    tile, a8_oracle::metrics_line(m).c_str());
+        return m.ok() ? 0 : 1;
+    };
+
+    failures += verify_oracle("qk", qkv, qk, kQkvRows, 0, kQkRows, 0);
+    failures += verify_oracle("value", qkv, vz, kQkvRows, kQkRows, kValueRows, 0);
+    failures += verify_oracle("z", z, vz, kZRows, 0, kZRows, kValueRows);
+    return failures;
+}
+
+int run_q4_q5_allow_a8() {
+    constexpr std::int32_t kHidden = 5120;
+    // Distinct patterned-weight seeds; Q4 and Q5 parents are separate parents.
+    DevicePackedWeight q4_qk(
+        quantized_weight::make_patterned_weight(QType::Q4G64_F16S, 4096, kHidden, 733U));
+    DevicePackedWeight q4_vz(
+        quantized_weight::make_patterned_weight(QType::Q4G64_F16S, 12288, kHidden, 739U));
+    DevicePackedWeight q5_vz(
+        quantized_weight::make_patterned_weight(QType::Q5G64_F16S, 12288, kHidden, 769U));
+    int failures     = 0;
+    for (const std::int32_t tokens : {1792, 1521}) {
+        failures += run_q4_q5_allow_a8_case(q4_qk, q4_vz, tokens);
+        failures += run_q4_q5_allow_a8_case(q4_qk, q5_vz, tokens);
+    }
     return failures;
 }
 
@@ -340,6 +426,7 @@ int main() {
 
     int failures = 0;
     failures += run_q4_q5();
+    failures += run_q4_q5_allow_a8();
     failures += run_w8();
     failures += run_nvfp4();
     failures += run_fp8();

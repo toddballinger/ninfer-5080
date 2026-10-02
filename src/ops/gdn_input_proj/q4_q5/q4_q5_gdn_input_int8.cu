@@ -42,7 +42,7 @@ void q4_q5_gdn_input_int8_launch(const Tensor& x, const Weight& qk_weight,
         make_job(value_z_weight, 0, kValueRows, qkv, qk_weight.n),
         make_job(value_z_weight, kValueRows, kValueRows, z, 0),
     };
-    int8_proj_launch(x, jobs, 3, scratch, stream);
+    int8_proj_launch(x, jobs, 3, Int8ProjFamily::Gdn, scratch, stream);
 }
 
 } // namespace ninfer::ops::detail

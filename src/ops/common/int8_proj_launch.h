@@ -52,11 +52,13 @@ constexpr std::int32_t int8_proj_token_tile(std::int32_t cols) noexcept {
     return cols < kInt8ProjMaxTokenTile ? cols : kInt8ProjMaxTokenTile;
 }
 
-// Quantizes `x` once and runs every job against it, in bounded token tiles.
-// `x` is BF16 [k, cols]; each job's output is BF16 [*, cols].
-void int8_proj_prewarm();
+// Explicit wrapper identity; never infer the family from job count.
+enum class Int8ProjFamily : std::int32_t { Attention = 1, Gdn = 2 };
 
+void int8_proj_prewarm();
+// Quantizes x once and runs each job against bounded token tiles.
 void int8_proj_launch(const Tensor& x, const Int8ProjJob* jobs, int job_count,
-                      const Int8ProjWorkspace& scratch, cudaStream_t stream);
+                      Int8ProjFamily family, const Int8ProjWorkspace& scratch,
+                      cudaStream_t stream);
 
 } // namespace ninfer::ops::detail

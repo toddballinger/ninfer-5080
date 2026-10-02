@@ -1,6 +1,7 @@
 #include "ninfer/ops/attn_input_proj.h"
 
 #include "ops/direct_bf16_weight.h"
+#include "ops/a8_projection_oracle.h"
 #include "ops/input_projection_test_common.h"
 
 #include <cuda_runtime.h>
@@ -453,6 +454,91 @@ int run_q4_q5() {
     return failures;
 }
 
+// Issue #18 M0: bounded Q4/Q5 A8 oracle coverage for the wide (T=1792,
+// full 6144/1024-row) and narrow (T=1521) attention-output-row schedules.
+// The independent CPU oracle verifies every projection's int8 A8 reference
+// bound; gross bound violations are failures.
+
+int run_q4_q5_allow_a8_case(DevicePackedWeight& qk, DevicePackedWeight& gv,
+                            std::int32_t tokens) {
+    constexpr std::int32_t kHidden = 5120;
+    constexpr std::int32_t kQRows  = 6144;
+    constexpr std::int32_t kKvRows = 1024;
+    const std::vector<float> activation = make_bf16_activation(kHidden, tokens, 521U + tokens);
+    const std::vector<std::uint16_t> activation_bits = bf16_bits(activation);
+    DeviceBuffer device_activation                   = to_device(activation_bits);
+
+    GuardedBf16Tensor query(kQRows, tokens);
+    GuardedBf16Tensor gate(kQRows, tokens);
+    GuardedBf16Tensor key(kKvRows, tokens);
+    GuardedBf16Tensor value(kKvRows, tokens);
+    Tensor x(device_activation.p, DType::BF16, {kHidden, tokens});
+    Tensor q = query.tensor();
+    Tensor g = gate.tensor();
+    Tensor k = key.tensor();
+    Tensor v = value.tensor();
+
+    const std::size_t capacity =
+        ops::attn_input_proj_workspace_capacity_bytes(kHidden, ops::LinearPolicy::AllowA8, tokens,
+                                                      tokens);
+    DeviceArena workspace(std::max<std::size_t>(capacity, 256));
+    ops::attn_input_proj(x, qk.view(), gv.view(), q, g, k, v,
+                         ops::LinearPolicy::AllowA8, workspace, nullptr);
+    cuda_synchronize();
+
+    const std::string suffix = "A8 T=" + std::to_string(tokens);
+    int failures            = 0;
+    failures += query.verify_guards("attn q" + suffix);
+    failures += query.verify_fully_written("attn q" + suffix);
+    failures += gate.verify_guards("attn gate" + suffix);
+    failures += gate.verify_fully_written("attn gate" + suffix);
+    failures += key.verify_guards("attn k" + suffix);
+    failures += key.verify_fully_written("attn k" + suffix);
+    failures += value.verify_guards("attn value" + suffix);
+    failures += value.verify_fully_written("attn value" + suffix);
+    failures += verify_preserved("attn x" + suffix, device_activation, activation_bits);
+    failures += qk.verify_preserved("attn query/key" + suffix);
+    failures += gv.verify_preserved("attn gate/value" + suffix);
+
+    auto verify_oracle = [&](std::string_view role, const GuardedBf16Tensor& output,
+                            const DevicePackedWeight& parent, std::int32_t weight_row_offset,
+                            std::int32_t rows) {
+        const std::vector<double> actual =
+            gather_rows(output.values(), rows, 0, rows, tokens, 31);
+        a8_oracle::A8OracleMetrics m =
+            a8_oracle::compute_a8_oracle(parent.host, actual, activation, weight_row_offset, rows,
+                                         tokens);
+        const char* qtype =
+            (parent.host.weight.qtype == QType::Q4G64_F16S) ? "Q4" : "Q5";
+        const char* tile = (tokens == 1521) ? "Tail" : "Full";
+        std::printf("attn %s %s A8 rows=%d T=%d tile=%s: %s",
+                    role.data(), qtype, rows, tokens, tile, a8_oracle::metrics_line(m).c_str());
+        return m.ok() ? 0 : 1;
+    };
+
+    failures += verify_oracle("q", query, qk, 0, kQRows);
+    failures += verify_oracle("k", key, qk, kQRows, kKvRows);
+    failures += verify_oracle("gate", gate, gv, 0, kQRows);
+    failures += verify_oracle("value", value, gv, kQRows, kKvRows);
+    return failures;
+}
+
+int run_q4_q5_allow_a8() {
+    constexpr std::int32_t kHidden = 5120;
+    constexpr std::int32_t kParent = 7168;
+    int failures                   = 0;
+    DevicePackedWeight q4_qk(
+        quantized_weight::make_patterned_weight(QType::Q4G64_F16S, kParent, kHidden, 541U));
+    DevicePackedWeight q5_gv(
+        quantized_weight::make_patterned_weight(QType::Q5G64_F16S, kParent, kHidden, 563U));
+    // Registered mixed parent: Q4 query/key and Q5 gate/value. Q4/Q4 remains
+    // an A16 regression case and intentionally does not claim A8 coverage.
+    for (const std::int32_t tokens : {1792, 1521}) {
+        failures += run_q4_q5_allow_a8_case(q4_qk, q5_gv, tokens);
+    }
+    return failures;
+}
+
 std::vector<double> bf16_attention_oracle(const HostWeight& weight,
                                           std::span<const float> activation) {
     std::vector<double> result(static_cast<std::size_t>(weight.n));
@@ -861,6 +947,7 @@ int main() {
 
     int failures = 0;
     failures += run_q4_q5();
+    failures += run_q4_q5_allow_a8();
     failures += run_bf16_target();
     failures += run_nvfp4_target();
     failures += run_fp8_target();
