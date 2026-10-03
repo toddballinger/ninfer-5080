@@ -37,6 +37,40 @@ only 8.56 MiB free / 10.08 MiB planned slack.
 Those older measurements remain below as historical evidence; v1.5 is the
 current production-qualified profile.
 
+## Current memory-optimization priority: concurrency before larger C1 context
+
+The validated v1.5 memory envelope above is still the production reference. A more recent live
+production observation reported about `15148 MiB / 16303 MiB` used at the existing 128K service
+configuration, or roughly 1.1 GiB reported free. Treat that as an operating-point signal, not as a
+replacement for the release measurement.
+
+The first use to investigate for any available/recovered VRAM is **C2 serving at the existing
+131072 per-request logical ceiling**, not automatically a larger C1 context window.
+
+The current gate is:
+
+```text
+MAX_CONTEXT=131072              # per sequence
+KV_CAPACITY=shared/swept        # physical shared pool
+MAX_CONCURRENCY=1 -> 2          # C4 only after C2
+KV_DTYPE=q4-group64             # first gate; no codec change
+MTP_DRAFT_TOKENS=3
+VISION_MAX_TOKENS=2048
+EMBEDDING_HOST=on
+CUDA_GRAPHS=on
+```
+
+Measure exact per-lane fixed-state, backend-KV, request-transient, workspace and Graph costs rather
+than dividing free VRAM by an estimated bytes/token value. Shared KV is not statically partitioned
+per slot, so realistic C2 mixes can be useful even when two simultaneous full-128K allocations
+would not fit.
+
+If current Q4 cannot provide useful C2 because KV capacity is the measured blocker, evaluate
+`rk4v4-e8` before `rk2v4-e8`. If the blocker is scheduler/runtime state rather than KV memory,
+fix or split that issue instead of changing the KV codec unnecessarily.
+
+See [CONCURRENCY_128K.md](CONCURRENCY_128K.md) and issue #32.
+
 ## Text-model quantization
 
 The text core is mixed Q3/Q4/Q5 groupwise:
