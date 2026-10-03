@@ -116,7 +116,15 @@ The current workload is one GPU and one resident model instance with a startup-f
 active requests. The Engine forms one compact decode batch at every round boundary and uses bounded
 FIFO ingress with no request preemption. Large-scale or preemptive continuous batching, priority/QoS
 scheduling, additional checkpoint targets, and retargeting the implementation to another execution
-platform are outside the current product. This is a local, single-owner project. Registered models,
+platform are outside the current product.
+
+For the RTX 5080 / Qwen3.8-27B production path, the current highest-priority bounded performance
+gate is **C2 qualification with the existing Q4 KV path at a 131072 per-request logical ceiling**.
+Treat this first as an operating-point measurement of the already-supported concurrent architecture,
+not as authorization for a new KV codec or a broad scheduler redesign. Preserve MTP-3, Vision,
+CUDA Graph and production correctness while measuring aggregate throughput, per-request latency,
+admission delay, memory headroom and fairness. If current Q4 is memory-blocked, issue #32 owns the
+follow-on `rk4v4-e8` then `rk2v4-e8` investigation. This is a local, single-owner project. Registered models,
 generated artifacts, and the local workflow are trusted.
 Requirements derived from a different workload, trust model, or deployment model are out of scope
 until that product contract is explicitly changed.
