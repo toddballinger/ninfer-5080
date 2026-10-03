@@ -43,10 +43,11 @@ rows over PCIe ([Embedding host residency](#embedding-host-residency)); it is or
 flags and works with every execution route, including speculative decoding.
 
 
-### RTX 5080 v1.4 production profile
+### RTX 5080 production profile
 
-For the project-qualified Qwen3.8-27B RTX 5080 16 GB configuration, the recommended serving
-profile is:
+For the project-qualified Qwen3.8-27B RTX 5080 16 GB configuration, the validated release
+profile remains C1. The example below records the release-style serving shape; current
+qualification work is testing C2 separately rather than silently changing the production default:
 
 ```bash
 ./build/apps/ninfer-serve /path/to/qwen3_8_27b.ninfer \
@@ -74,8 +75,33 @@ the canonical sustained-decode benchmark from **95.09 tok/s to 96.97 tok/s media
 retaining **715.54 MiB planned slack**. Host-mapped token embeddings account for **795.70 MiB** of
 host-resident model storage and are what make this production headroom practical.
 
-See [the v1.4 release record](RELEASE_QWEN3.8_27B_RTX5080_V1.4.md) and
+See the [v1.5 release record](RELEASE_QWEN3.8_27B_RTX5080_V1.5.md), the
+[v1.4 release record](RELEASE_QWEN3.8_27B_RTX5080_V1.4.md), and
 [canonical benchmarks](BENCHMARKS.md).
+
+### RTX 5080 C2 qualification target
+
+The Engine/server architecture already supports startup-fixed `max_concurrency=1..8`, shared KV
+capacity and maximal batched decode. The current RTX 5080 performance priority is therefore an
+**operating-point qualification**, not a proposal to run two model instances.
+
+First test the existing Q4/MTP-3/Vision/Graph path with:
+
+- `max_context=131072` preserved per request;
+- shared `kv_capacity` swept independently from the logical per-request ceiling;
+- `max_concurrency=2`;
+- realistic asymmetric request mixes as well as two short local-worker requests.
+
+Do not assume C2 requires `2 * 131072` KV capacity. Admission reserves the actual declared/request
+resource envelope against the shared pools; one long request plus one shorter request can be a
+valid and useful operating point.
+
+The primary product metric is completed OpenClaw work per unit time, including queue/admission
+delay, not only single-request tok/s. If C2 is useful, qualify it before pursuing a larger C1
+context. If memory prevents it, use the measured blocker to drive the compressed-KV work in issue
+#32.
+
+See [RTX 5080 128K concurrency qualification](CONCURRENCY_128K.md).
 
 
 ## Endpoints
