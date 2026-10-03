@@ -103,6 +103,16 @@ graph observed/allowance    2.00 / 82.00 MiB
 
 Detailed memory and Vision qualification is documented in [VISION_128K.md](docs/VISION_128K.md) and [MEMORY_PROFILE.md](docs/MEMORY_PROFILE.md).
 
+### Next production qualification: C2 concurrency at 128K-class context
+
+The v1.5 command above remains the validated C1 release profile. The current highest-priority bounded performance gate is now to determine whether the existing Q4-group64 serving path can preserve a **131,072-token per-request ceiling** while using shared KV/admission capacity for useful **C2** execution on the RTX 5080.
+
+This is aimed directly at OpenClaw-style parallel local-worker activity: two independent requests should be able to make progress together when their combined active KV/resource reservations fit, rather than one waiting behind the other. C4 is a secondary target for bursts of shorter requests.
+
+Do not infer 2x throughput from C2. Qualification must compare aggregate throughput, per-request latency, TTFT/admission wait, MTP acceptance, CUDA Graph/workspace behavior and VRAM headroom. The first gate uses the current Q4 profile; compressed KV is a follow-on only if current-Q4 memory is the limiting factor.
+
+See [RTX 5080 128K concurrency qualification](docs/CONCURRENCY_128K.md).
+
 ## Long-context benchmark
 
 Whole-model performance is reported with `ninfer_bench` against the committed immutable 118,001-token ID corpus:
@@ -200,6 +210,7 @@ Start with:
 - [Vision 128K](docs/VISION_128K.md) — Vision profiles, memory envelope and validation
 - [Reproducibility](docs/REPRODUCIBILITY.md) — build and runtime reproduction
 - [Memory profile](docs/MEMORY_PROFILE.md) — how the 16 GB fit is achieved
+- [128K concurrency qualification](docs/CONCURRENCY_128K.md) — current-Q4 C2/C4 operating-point gate for OpenClaw
 - [Upstream sync status](docs/UPSTREAM_SYNC_STATUS.md) — selective semantic-port ledger and review policy
 - [Constrained decisions](docs/CONSTRAINED_DECISIONS_USAGE.md) — current C++ finite-decision API, multi-token tries, dependencies and backend limits
 - [Technical deep dive](docs/TECHNICAL_DEEP_DIVE.md) — architecture and optimization details
