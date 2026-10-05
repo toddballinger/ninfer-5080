@@ -36,6 +36,8 @@ void set_i32_scalar(Tensor& destination, std::int32_t value, cudaStream_t stream
 void assign_i32_scalar(const Tensor& source, Tensor& destination, cudaStream_t stream);
 void add_i32_scalars(const Tensor& lhs, const Tensor& rhs, Tensor& destination,
                      cudaStream_t stream);
+void decrement_i32_scalar(Tensor& scalar, cudaStream_t stream);
+
 void increment_i32_scalar(Tensor& scalar, cudaStream_t stream);
 void increment_i64_scalar(Tensor& scalar, cudaStream_t stream);
 

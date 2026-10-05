@@ -259,6 +259,7 @@ public:
     // folds replay and advances ledger, prefix identity, KV and frontier once;
     // the lane is then terminal-retained for the next warm prompt.
     void commit_decision_token(std::uint32_t lane, TokenId winner_token);
+    void commit_decision_tokens(std::uint32_t lane, std::span<const TokenId> selected_path);
 
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
 

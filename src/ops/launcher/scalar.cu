@@ -28,6 +28,11 @@ void increment_i32_scalar_launch(Tensor& scalar, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
+void decrement_i32_scalar_launch(Tensor& scalar, cudaStream_t stream) {
+    decrement_i32_scalar_kernel<<<1, 1, 0, stream>>>(static_cast<std::int32_t*>(scalar.data));
+    CUDA_CHECK(cudaGetLastError());
+}
+
 void increment_i64_scalar_launch(Tensor& scalar, cudaStream_t stream) {
     increment_i64_scalar_kernel<<<1, 1, 0, stream>>>(static_cast<std::int64_t*>(scalar.data));
     CUDA_CHECK(cudaGetLastError());

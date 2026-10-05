@@ -3247,6 +3247,43 @@ ProgramImplCore::decode_ordinary_batch(std::span<const std::uint32_t> lanes,
     }
 }
 
+void ProgramImplCore::commit_decision_tokens(
+    std::uint32_t lane, std::span<const TokenId> selected_path) {
+    if (lane >= max_concurrency || selected_path.empty()) {
+        throw std::invalid_argument("decision selected path is invalid");
+    }
+    SequenceState& sequence = sequences[lane];
+    RequestControl& request = requests[lane];
+    // Validate the entire selected path before mutating the target frontier.
+    require_decision_commit_ready(lane, selected_path.front(), max_concurrency,
+                                  TextConfig::token_domain,
+                                  speculative_backend == SpeculativeBackend::Mtp,
+                                  static_cast<bool>(io.mtp_decode), sequence,
+                                  request.lifecycle == Lifecycle::Complete, capacity);
+    if (selected_path.size() > capacity - sequence.execution_frontier) {
+        throw std::invalid_argument("decision selected path exceeds target capacity");
+    }
+    for (const TokenId token : selected_path) {
+        if (token < 0 || token >= TextConfig::token_domain) {
+            throw std::invalid_argument("decision selected path token is invalid");
+        }
+    }
+    try {
+        for (std::size_t i = 0; i < selected_path.size(); ++i) {
+            // Each target round replaces the unexecuted sampled successor from
+            // the preceding round, folds replay and advances the frontier once.
+            // Re-arm M1's guard only inside this selected-path transaction.
+            if (i != 0) { sequence.decision_commit_consumed = false; }
+            commit_decision_token(lane, selected_path[i]);
+        }
+    } catch (...) {
+        // A partially committed path cannot be published or reused.
+        try { device.synchronize(); } catch (...) {}
+        clear_lane(sequence, request);
+        throw;
+    }
+}
+
 void
 ProgramImplCore::commit_decision_token(std::uint32_t lane, TokenId winner_token) {
     // Validate the lane index before accessing its state; the shared guard validates
@@ -3292,14 +3329,19 @@ ProgramImplCore::commit_decision_token(std::uint32_t lane, TokenId winner_token)
         sequence.mtp_draft_count = 0;
         if (request.sampling_host.temperature > 0.0F &&
             request.sampling_host.token_counts != nullptr) {
-            // The prefill sample was the only count since install_sampling.
-            // Replace that count before the successor is sampled.
+            // Remove only the pending sample, never previously committed counts.
             Tensor counts = token_counts.slice(1, static_cast<std::int32_t>(lane), 1)
                                 .view({TextConfig::token_domain});
-            Tensor old_count = counts.slice(0, sampled_anchor, 1).view({1});
-            ops::set_i32_scalar(old_count, 0, device.stream);
-            Tensor winner_count = counts.slice(0, winner_token, 1).view({1});
-            ops::increment_i32_scalar(winner_count, device.stream);
+            replace_decision_sample_count(
+                sampled_anchor, winner_token,
+                [&](TokenId token) {
+                    Tensor count = counts.slice(0, token, 1).view({1});
+                    ops::decrement_i32_scalar(count, device.stream);
+                },
+                [&](TokenId token) {
+                    Tensor count = counts.slice(0, token, 1).view({1});
+                    ops::increment_i32_scalar(count, device.stream);
+                });
         }
 
         Tensor bridge_token = io.mtp->target_input_ids.slice(0, 0, 1);

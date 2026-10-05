@@ -1674,7 +1674,7 @@ private:
             settle_decision_commit(
                 std::move(*decision),
                 instance_.program->speculative_backend() == SpeculativeBackend::Mtp,
-                [&](TokenId winner) { instance_.program->commit_decision_token(lane, winner); },
+                [&](std::span<const TokenId> path) { instance_.program->commit_decision_tokens(lane, path); },
                 [&](DecisionResult ready) {
                     remove_completed_slot(lane);
                     complete_decision_success(request, std::move(ready));

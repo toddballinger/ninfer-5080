@@ -1,11 +1,4 @@
-// Issue-55 M1: production commit-selection gate with host callbacks.
-// Binding rule: only a field with winner_token >= 0 AND suffix_tokens == 0
-// (winner scored at the retained frontier E) may be committed at E. Fields
-// scored after a nonzero deterministic suffix are not eligible; trie fields
-// (winner_token == -1) and no-winner fields are ineligible. A later
-// one-token field must never skip a trie and install a suffix-scored winner.
-// When no field is eligible, the target is left untouched and the result is
-// still published once (success path) - the existing publication contract.
+// Issue-55 M1/M2: production selection gate and program-order path publication.
 #include "runtime/engine/decision_commit_publication.h"
 #include <iostream>
 #include <stdexcept>
@@ -28,6 +21,8 @@ DecisionResult make_result(const std::vector<FieldCase>& fields) {
         if (f.trie) {
             field.candidate_token_paths = {{1, 2}, {3, 4}};
             field.winner_token = -1;
+            field.winner_index = 1;
+            field.suffix_tokens = 3; // Trie ambiguity probes are not a deterministic extension.
         }
         result.fields.push_back(field);
     }
@@ -44,7 +39,7 @@ int main() {
         std::vector<TokenId> commits;
         int successes = 0, failures = 0;
         settle_decision_commit(std::move(result), mtp,
-                               [&](TokenId winner) { commits.push_back(winner); },
+                               [&](std::span<const TokenId> path) { commits.insert(commits.end(), path.begin(), path.end()); },
                                [&](DecisionResult ready) {
                                    ++successes;
                                    if (ready.fields.size() != field_count)
@@ -75,21 +70,34 @@ int main() {
     // publication contract).
     run({{42, 3, false}}, true, {});
 
-    // Mixed trie / one-token: the trie field has winner_token -1 (ineligible);
-    // the later one-token field was scored after a nonzero deterministic suffix.
-    // Neither is eligible: the one-token field must NOT skip the trie and
-    // install its (after-E) winner at E.
-    run({{0, 0, true}, {77, 2, false}}, true, {});
-    // Same shape, but the later one-token field is eligible (scored at E):
-    // the trie is still skipped (trie fields carry no singular token at E);
-    // the eligible one-token field commits.
-    run({{0, 0, true}, {77, 0, false}}, true, {77});
-    // A trie field alone: ineligible, no commit, result published once.
-    run({{0, 0, true}}, true, {});
+    // Selected trie path is candidate_token_paths[winner_index], even though
+    // winner_token is -1 and ambiguity probes report a nonzero suffix count.
+    run({{0, 0, true}}, true, {3, 4});
+    run({{0, 0, true}, {77, 0, false}}, true, {3, 4});
+    run({{0, 0, true}, {77, 2, false}}, true, {3, 4});
+    run({{-1, 0, false}, {0, 0, true}}, true, {3, 4});
+    // An earlier eligible M1 field retains program-order priority.
+    run({{42, 0, false}, {0, 0, true}}, true, {42});
     // Non-MTP backend: the gate never commits (target entry point is
     // MTP-only); the result is still published exactly once.
     run({{42, 0, false}}, false, {});
     run({{42, 3, false}}, false, {});
+    run({{0, 0, true}}, false, {});
+
+    // Malformed selected metadata must fail locally before target mutation or
+    // result publication; it may not fall through to a later M1 winner.
+    {
+        auto invalid = make_result({{0, 0, true}, {77, 0, false}});
+        invalid.fields.front().winner_index = 2;
+        int commits = 0, successes = 0, failures = 0;
+        settle_decision_commit(std::move(invalid), true,
+            [&](std::span<const TokenId>) { ++commits; },
+            [&](DecisionResult) { ++successes; },
+            [&](std::exception_ptr) { ++failures; });
+        if (commits || successes || failures != 1)
+            throw std::runtime_error("invalid selected path was published");
+        ++cases;
+    }
 
     std::cout << "decision-commit-gate: " << cases << " production gate cases passed\n";
 }

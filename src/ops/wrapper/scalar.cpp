@@ -47,6 +47,11 @@ void increment_i32_scalar(Tensor& scalar, cudaStream_t stream) {
     detail::increment_i32_scalar_launch(scalar, stream);
 }
 
+void decrement_i32_scalar(Tensor& scalar, cudaStream_t stream) {
+    require_scalar(scalar, DType::I32, "decrement_i32_scalar scalar");
+    detail::decrement_i32_scalar_launch(scalar, stream);
+}
+
 void increment_i64_scalar(Tensor& scalar, cudaStream_t stream) {
     require_scalar(scalar, DType::I64, "increment_i64_scalar scalar");
     detail::increment_i64_scalar_launch(scalar, stream);

@@ -546,3 +546,17 @@ add_test(
   NAME ninfer_linear_w8_k_slice_test
   COMMAND ninfer_linear_w8_k_slice_test
 )
+
+# Issue #55 M2: GPU-only target-authoritative selected trie path versus an
+# independent prompt-plus-path reference. Never run in host-only qualification.
+ninfer_add_test(ninfer_qwen3_8_27b_mtp_selected_path_real_test
+  SOURCES targets/qwen3_6_27b/test_mtp_selected_path_real.cpp
+  LIBRARIES ninfer_engine)
+set_tests_properties(ninfer_qwen3_8_27b_mtp_selected_path_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
+
+# Host-only production count-replacement helper; repeated selected tokens with
+# positive-temperature frequency penalty discriminate zeroing from decrementing.
+ninfer_add_test(ninfer_decision_penalty_counts_test
+  SOURCES test_decision_penalty_counts.cpp
+  LIBRARIES ninfer_core)

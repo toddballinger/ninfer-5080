@@ -1,6 +1,8 @@
 #pragma once
 #include "ninfer/types.h"
 #include <exception>
+#include <span>
+#include <stdexcept>
 #include <utility>
 
 namespace ninfer::runtime {
@@ -11,14 +13,26 @@ void settle_decision_commit(DecisionResult result, bool mtp, Commit&& commit,
     if (mtp) {
         try {
             for (const auto& field : result.fields) {
-                // Only a field whose winner was scored at the retained frontier E
-                // (winner_token >= 0 AND suffix_tokens == 0) commits at E. A
-                // depth-1 field scored after a nonzero deterministic suffix belongs
-                // after E; a trie or no-winner field has no singular token at E.
-                // Scanning in program order means a later one-token field can never
-                // skip a trie and commit where none is eligible.
+                // Trie suffix_tokens counts ambiguity probes, not a deterministic
+                // extension from E. Its selected full path starts at E.
+                if (!field.candidate_token_paths.empty()) {
+                    if (field.winner_index < 0 ||
+                        static_cast<std::size_t>(field.winner_index) >=
+                            field.candidate_token_paths.size()) {
+                        throw std::logic_error("selected trie path is invalid");
+                    }
+                    const auto& path = field.candidate_token_paths[field.winner_index];
+                    if (path.empty()) {
+                        throw std::logic_error("selected trie path is empty");
+                    }
+                    commit(std::span<const TokenId>(path));
+                    break;
+                }
+                // M1: a depth-1 winner with a nonzero deterministic suffix
+                // belongs after E and must not be installed at E.
                 if (field.winner_token >= 0 && field.suffix_tokens == 0) {
-                    commit(field.winner_token);
+                    const TokenId winner = field.winner_token;
+                    commit(std::span<const TokenId>(&winner, 1));
                     break;
                 }
             }

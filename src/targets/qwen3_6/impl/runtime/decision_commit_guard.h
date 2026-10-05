@@ -5,6 +5,14 @@
 #include <utility>
 
 namespace ninfer::targets::qwen3_6::detail {
+// Replace only the pending sample, preserving previously committed M2 winners.
+template <class Decrement, class Increment>
+void replace_decision_sample_count(TokenId anchor, TokenId winner,
+                                   Decrement&& decrement, Increment&& increment) {
+    decrement(anchor);
+    increment(winner);
+}
+
 // Text executes the winner at E; the zero-extent MTP round still reserves
 // through E + draft_window. Match decode_mtp_batch's materialize_sequence_kv.
 constexpr std::pair<std::uint32_t, std::uint32_t> decision_commit_kv_extents(

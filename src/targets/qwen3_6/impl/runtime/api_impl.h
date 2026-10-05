@@ -242,6 +242,12 @@ void Program<Variant>::commit_decision_token(std::uint32_t lane, TokenId winner_
 }
 
 template <>
+void Program<Variant>::commit_decision_tokens(std::uint32_t lane,
+                                             std::span<const TokenId> selected_path) {
+    impl_->commit_decision_tokens(lane, selected_path);
+}
+
+template <>
 SpeculativeBackend Program<Variant>::speculative_backend() const noexcept {
     return impl_->speculative_backend;
 }
