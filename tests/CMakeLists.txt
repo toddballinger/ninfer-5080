@@ -188,6 +188,65 @@ ninfer_add_test(ninfer_qwen3_8_27b_decision_scheduler_isolation_real_test
 set_tests_properties(
   ninfer_qwen3_8_27b_decision_scheduler_isolation_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
+
+# Issue #55 M1: exercise the production worker commit-selection gate with host callbacks
+# (MTP only, first eligible winner including zero, non-MTP/no-winner bypass).
+ninfer_add_test(ninfer_decision_commit_gate_test
+  SOURCES test_decision_commit_gate.cpp
+  LIBRARIES ninfer_core)
+
+# Issue #55 M1: deterministically block the production gate inside a host commit,
+# assert no publication until release, then move the result; assert commit failure
+# dispatches only the failure callback. No GPU/weights required.
+ninfer_add_test(ninfer_decision_publication_order_test
+  SOURCES test_decision_publication_order.cpp
+  LIBRARIES ninfer_core)
+
+# Exercise the exact pre-device-work guard called by the target commit entry point.
+ninfer_add_test(ninfer_decision_target_commit_guard_test
+  SOURCES test_decision_target_commit_guard.cpp
+  LIBRARIES ninfer_core)
+
+# GPU-only: same selected continuation and runtime-owned position, existing sequential FORCE.
+ninfer_add_test(ninfer_qwen3_8_27b_mtp_matched_force_real_test
+  SOURCES targets/qwen3_6_27b/test_mtp_matched_force_real.cpp
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_qwen3_8_27b_mtp_matched_force_real_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_5_9b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
+target_link_libraries(ninfer_qwen3_8_27b_mtp_matched_force_real_test PRIVATE CUDA::cudart)
+set_tests_properties(ninfer_qwen3_8_27b_mtp_matched_force_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
+
+# GPU-only: first real target commit succeeds, duplicate rejects before any fold.
+ninfer_add_test(ninfer_qwen3_8_27b_mtp_duplicate_target_commit_real_test
+  SOURCES targets/qwen3_6_27b/test_mtp_duplicate_target_commit_real.cpp
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_qwen3_8_27b_mtp_duplicate_target_commit_real_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_5_9b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
+target_link_libraries(ninfer_qwen3_8_27b_mtp_duplicate_target_commit_real_test PRIVATE CUDA::cudart)
+set_tests_properties(ninfer_qwen3_8_27b_mtp_duplicate_target_commit_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
+
+# GPU-only: a raw zero-suffix depth-1 decision field scores at the retained frontier E
+# and commits its winner exactly at E; the actual runtime position is proven through a
+# test-only inspector reading the engine's private ProgramImpl sequence state.
+ninfer_add_test(ninfer_qwen3_8_27b_mtp_selected_commit_actual_position_real_test
+  SOURCES targets/qwen3_6_27b/test_mtp_selected_commit_actual_position_real.cpp
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_qwen3_8_27b_mtp_selected_commit_actual_position_real_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_5_9b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
+target_link_libraries(ninfer_qwen3_8_27b_mtp_selected_commit_actual_position_real_test PRIVATE CUDA::cudart)
+set_tests_properties(ninfer_qwen3_8_27b_mtp_selected_commit_actual_position_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
 set_tests_properties(
   ninfer_qwen3_8_27b_compiled_decision_plan_real_test
   PROPERTIES SKIP_RETURN_CODE 77)

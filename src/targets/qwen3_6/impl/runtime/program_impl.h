@@ -1,5 +1,6 @@
 #include "targets/qwen3_6/impl/runtime/instance.h"
 #include "targets/qwen3_6/impl/runtime/program.h"
+#include "targets/qwen3_6/impl/runtime/decision_commit_guard.h"
 
 #include "targets/qwen3_6/impl/runtime/schedule.h"
 #include "runtime/contract/decision_resources.h"
@@ -618,6 +619,11 @@ runtime::PrefillStepResult ProgramImplCore::start_prefill_lane(std::uint32_t lan
             : 0U;
     request.lifecycle = Lifecycle::Empty;
     sequence.retained = false;
+    // Lane-reuse recovery (Issue-55 M1): a recycled lane may carry `decision_commit_consumed
+    // = true` from a prior decision commit. Every fresh prefill over the lane is a fresh
+    // decision authority, so the exactly-once commit latch must be cleared on re-admission
+    // (`clear_lane` alone only fires on cancel/evict, not on this fresh-prefill path).
+    sequence.decision_commit_consumed = false;
     try {
         if (request_plan.reuse == ReusePath::FullReset) {
             sequence.kv.reset();
@@ -1178,7 +1184,9 @@ SpeculativeStats ProgramImplCore::speculative_stats_lane(std::uint32_t lane) con
 
 DecisionProbeResult
 ProgramImplCore::score_decision_candidates(
-    std::span<const TokenId> candidate_tokens) {
+    std::span<const TokenId> candidate_tokens,
+    const Tensor& logits,
+    bool fresh_projection) {
 
     if (!io.ordinary) {
         throw std::logic_error(
@@ -1198,10 +1206,16 @@ ProgramImplCore::score_decision_candidates(
             "decision scorer candidate count exceeds int32 tensor representation");
     }
 
+    // A projected column occupies the front of this same terminal arena.
+    const std::size_t projection_bytes = fresh_projection
+        ? runtime::align_decision_workspace(
+              static_cast<std::size_t>(logits.ne[0]) * sizeof(std::uint16_t))
+        : 0;
     const runtime::DecisionScorerWorkspaceProjection workspace =
         runtime::project_decision_scorer_workspace(
             candidate_tokens.size(),
-            work.capacity());
+            work.capacity() >= projection_bytes
+                ? work.capacity() - projection_bytes : 0);
 
     if (!workspace.fits) {
         throw std::length_error(
@@ -1210,10 +1224,10 @@ ProgramImplCore::score_decision_candidates(
                 workspace.requested_candidates) +
             " required_bytes=" +
             std::to_string(
-                workspace.required_bytes) +
+                workspace.required_bytes + projection_bytes) +
             " available_bytes=" +
             std::to_string(
-                workspace.available_bytes) +
+                work.capacity()) +
             " workspace_maximum_K=" +
             std::to_string(
                 workspace.maximum_candidates));
@@ -1226,7 +1240,7 @@ ProgramImplCore::score_decision_candidates(
     // Decision scoring is terminal with respect to the preceding model
     // traversal. Reuse the ordinary runtime workspace rather than reserving
     // a fixed persistent candidate domain.
-    work.reset();
+    if (!fresh_projection) work.reset();
 
     try {
         Tensor ids =
@@ -1255,10 +1269,6 @@ ProgramImplCore::score_decision_candidates(
                     sizeof(TokenId),
                 cudaMemcpyHostToDevice,
                 device.stream));
-
-        Tensor logits =
-            io.ordinary->logits
-                .slice(1, 0, 1);
 
         ops::constrained_choice(
             logits,
@@ -1358,10 +1368,12 @@ ProgramImplCore::decision_probe_lane(
         throw std::out_of_range("decision probe lane is out of range");
     }
 
-    if (suffix_tokens.empty()) {
-        throw std::invalid_argument(
-            "decision probe suffix must contain at least one token");
-    }
+    // A zero-token suffix is legal on the non-wave single-field probe: it scores
+    // the field directly at the retained execution frontier (base) and its traversal
+    // loop runs zero times, so the retained frontier is preserved and the winner is
+    // committed exactly at base. The shared-wave lane keeps its own strict
+    // non-empty-suffix rule (a shared prefix must be traversed at least once), so
+    // this relaxation cannot widen the wave path.
 
     if (candidate_tokens.size() < 2) {
         throw std::invalid_argument(
@@ -1402,6 +1414,11 @@ ProgramImplCore::decision_probe_lane(
         sequence.prefix_identity.size() != sequence.ledger_frontier) {
         throw std::logic_error(
             "decision probe requires a complete retained ordinary frontier");
+    }
+
+    if (suffix_tokens.empty() && !sequence.tail_hidden_valid) {
+        throw std::logic_error(
+            "zero-suffix decision probe requires retained target tail hidden");
     }
 
     const std::uint32_t base = sequence.execution_frontier;
@@ -1600,9 +1617,20 @@ ProgramImplCore::decision_probe_lane(
         const auto score_started =
             Clock::now();
 
-        DecisionProbeResult scored =
-            score_decision_candidates(
-                candidate_tokens);
+        // A zero-length traversal leaves ordinary-frame logits stale. Project
+        // the retained target state into a distinct scoring column instead.
+        const bool fresh_projection = suffix_tokens.empty();
+        Tensor scoring_logits;
+        if (fresh_projection) {
+            work.reset();
+            scoring_logits = work.alloc(DType::BF16, {io.ordinary->logits.ne[0], 1});
+            ops::linear(sequence.tail_hidden, model.output_head,
+                        scoring_logits, device.stream);
+        } else {
+            scoring_logits = io.ordinary->logits.slice(1, 0, 1);
+        }
+        DecisionProbeResult scored = score_decision_candidates(
+            candidate_tokens, scoring_logits, fresh_projection);
 
         result.probabilities =
             std::move(
@@ -2041,7 +2069,7 @@ ProgramImplCore::decision_probe_wave_lane(
             -> qwen3_6::DecisionProbeResult {
 
         return score_decision_candidates(
-            candidate_tokens);
+            candidate_tokens, io.ordinary->logits.slice(1, 0, 1));
     };
 
     try {
@@ -2206,6 +2234,10 @@ void ProgramImplCore::clear_lane(SequenceState& sequence, RequestControl& reques
     sequence.mtp_draft_count         = 0;
     sequence.tail_hidden_valid       = false;
     sequence.retained                = false;
+    // Reset the M1 exactly-once commit latch so a recycled lane does not carry a stale
+    // `decision_commit_consumed = true` into the next decision and wrongly reject the
+    // fresh commit (lane-reuse recovery, Issue-55 M1).
+    sequence.decision_commit_consumed = false;
     sequence.rewrite_checkpoint      = {};
     request.pending                  = {};
 }
@@ -3215,6 +3247,113 @@ ProgramImplCore::decode_ordinary_batch(std::span<const std::uint32_t> lanes,
     }
 }
 
+void
+ProgramImplCore::commit_decision_token(std::uint32_t lane, TokenId winner_token) {
+    // Validate the lane index before accessing its state; the shared guard validates
+    // the remaining preconditions, including the already-consumed latch.
+    if (lane >= max_concurrency) {
+        throw std::invalid_argument("decision commit lane or winner is invalid");
+    }
+    SequenceState& sequence = sequences[lane];
+    RequestControl& request = requests[lane];
+    require_decision_commit_ready(lane, winner_token, max_concurrency,
+                                  TextConfig::token_domain,
+                                  speculative_backend == SpeculativeBackend::Mtp,
+                                  static_cast<bool>(io.mtp_decode), sequence,
+                                  request.lifecycle == Lifecycle::Complete, capacity);
+    // Prefill sampled an unexecuted anchor at E. The decision winner belongs
+    // at E, not after that anchor. Rebridge the MTP column at E-1 (which
+    // prefill constructed using the sampled anchor), then run the ordinary
+    // target-only round over the winner at E. Its natural successor at E+1
+    // is the pending token; normal resolution owns its fold and frontiers.
+    try {
+        // The one-output decision plan stops at E: its Text entitlement ends
+        // at E and its MTP entitlement at E + draft_window - 1. The target-only
+        // round executes the winner at E and materializes Text through E + 1,
+        // MTP through E + draft_window (even with a zero draft extent).
+        // Terminal prefill cancels unmapped growth entitlement, so the backend
+        // may have only one page even when the original plan reserved two.
+        // Restore the required entitlement on each allocation before decode.
+        const auto [text_tokens, backend_tokens] = decision_commit_kv_extents(
+            sequence.execution_frontier, draft_window, capacity);
+        const std::uint32_t text_pages = pages_for_tokens(text_tokens);
+        const std::uint32_t backend_pages = pages_for_tokens(backend_tokens);
+        if (text_pages > sequence.kv->text.page_entitlement() ||
+            backend_pages > sequence.kv->backend->page_entitlement()) {
+            resize_sequence_kv_entitlement(
+                sequence, std::max(text_pages, sequence.kv->text.page_entitlement()),
+                std::max(backend_pages, sequence.kv->backend->page_entitlement()));
+        }
+        bind_sequence_kv(sequence);
+        sequence.retained = false;
+        request.lifecycle = Lifecycle::Active;
+        const TokenId sampled_anchor = sequence.ledger.back();
+        sequence.ledger.back() = winner_token;
+        sequence.mtp_draft_count = 0;
+        if (request.sampling_host.temperature > 0.0F &&
+            request.sampling_host.token_counts != nullptr) {
+            // The prefill sample was the only count since install_sampling.
+            // Replace that count before the successor is sampled.
+            Tensor counts = token_counts.slice(1, static_cast<std::int32_t>(lane), 1)
+                                .view({TextConfig::token_domain});
+            Tensor old_count = counts.slice(0, sampled_anchor, 1).view({1});
+            ops::set_i32_scalar(old_count, 0, device.stream);
+            Tensor winner_count = counts.slice(0, winner_token, 1).view({1});
+            ops::increment_i32_scalar(winner_count, device.stream);
+        }
+
+        Tensor bridge_token = io.mtp->target_input_ids.slice(0, 0, 1);
+        CUDA_CHECK(cudaMemcpyAsync(bridge_token.data, &winner_token, sizeof(winner_token),
+                                   cudaMemcpyHostToDevice, device.stream));
+        const std::int32_t rope =
+            checked_i32(sequence.execution_frontier - 1U, "decision MTP bridge position") +
+            sequence.rope_delta;
+        const std::array<std::int32_t, 3> bridge_rope{rope, rope, rope};
+        schedule::PrefillContext bridge_state{
+            {device, model, work, decoder->linear_attention,
+             replay_records ? &*replay_records : nullptr,
+             replay_host_records ? &*replay_host_records : nullptr,
+             device.load_stream, &replay_ready_events, &replay_free_events,
+             io, prefill_hidden, prefill_chunk, proposal_head},
+            text_kv_view(sequence), mtp_kv_view(sequence), decoder->text_kv,
+            decoder->mtp_cache(), dflash ? &*dflash : nullptr,
+            sequence.execution_frontier,
+            static_cast<const ops::SamplingConfig*>(
+                sampling_config.slice(1, static_cast<std::int32_t>(lane), 1).data),
+            &sequence.rewrite_checkpoint_hidden,
+            LinearStateSlots::current_state_slot(lane, max_concurrency),
+            static_cast<unsigned char*>(rewrite_checkpoint_state_host->data()) +
+                decoder->linear_attention.slot_bytes() * static_cast<std::size_t>(lane),
+            dflash_rewrite_checkpoint_host
+                ? static_cast<unsigned char*>(dflash_rewrite_checkpoint_host->data()) +
+                      dflash_rewrite_checkpoint_stride * static_cast<std::size_t>(lane)
+                : nullptr,
+            dflash_rewrite_checkpoint_stride, 0, dflash_host_ingress};
+        schedule::mtp_bridge_and_propose(
+            bridge_state, bridge_token, sequence.tail_hidden,
+            checked_i32(sequence.execution_frontier - 1U, "decision MTP bridge position"),
+            bridge_rope, false);
+
+        const std::array<std::uint32_t, 1> lanes{lane};
+        const std::array<runtime::RoundBudget, 1> budgets{
+            runtime::RoundBudget{.generated_tokens_remaining = 1}};
+        const auto round = decode_mtp_batch(lanes, budgets);
+        if (round.row_counts[0] != 1) {
+            throw std::runtime_error("decision target-only round did not license a successor");
+        }
+        const std::array<std::uint32_t, 1> accepted{1};
+        const std::array<std::uint8_t, 1> terminal{1};
+        const std::array<std::uint8_t, 1> cancelled{0};
+        resolve_pending_batch(lanes, accepted, terminal, cancelled);
+        sequence.decision_commit_consumed = true;
+    } catch (...) {
+        // A partial device fold cannot be retried safely. Evict the lane.
+        try { device.synchronize(); } catch (...) {}
+        clear_lane(sequence, request);
+        throw;
+    }
+}
+
 runtime::BatchedGeneratedRound
 ProgramImplCore::decode_mtp_batch(std::span<const std::uint32_t> lanes,
                                   std::span<const runtime::RoundBudget> budgets) {
@@ -3418,6 +3557,12 @@ ProgramImplCore::decode_mtp_batch(std::span<const std::uint32_t> lanes,
                     0,
                     dflash_host_ingress};
 
+                // Batched decode binds its KV row through frame ingress; the
+                // single-row bridge instead reads the shared scalar IO row.
+                // A different lane's prefill/commit may have last installed it.
+                // Select this lane before overwriting its valid MTP column.
+                set_device_i32(io.backend_kv_table_row,
+                               sequence.kv->backend->bound_row());
                 schedule::mtp_bridge_and_propose(
                     bridge_state,
                     bridge_token,

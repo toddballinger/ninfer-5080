@@ -12,6 +12,7 @@
 #include "runtime/engine/admission_policy.h"
 #include "runtime/engine/request_memory.h"
 #include "runtime/engine/decision_execution.h"
+#include "runtime/engine/decision_commit_publication.h"
 #include "runtime/generation/generation_budget.h"
 #include "targets/qwen3_6/export/ninfer/targets/qwen3_6/frontend.h"
 
@@ -718,7 +719,7 @@ private:
         request->cv.notify_one();
     }
 
-    bool run_decision_request(const std::shared_ptr<Request>& request) {
+    std::optional<DecisionResult> run_decision_request(const std::shared_ptr<Request>& request) {
         if (!request->lane) {
             throw std::logic_error(
                 "decision request has no lane");
@@ -1087,7 +1088,7 @@ private:
                     complete_cancelled(
                         request);
 
-                    return true;
+                    return std::nullopt;
                 }
 
                 const DecisionExecutionNode& node =
@@ -1302,7 +1303,7 @@ private:
                                 complete_cancelled(
                                     request);
 
-                                return true;
+                                return std::nullopt;
                             }
 
                             for (std::size_t field_index = 0;
@@ -1338,14 +1339,19 @@ private:
                                 // replay-equivalent for V2-C2. Actual target
                                 // work is lower; planner reduction is a later
                                 // optimization.
+                                // A zero-suffix field still executes one decision probe
+                                // at the retained frontier; count one quantum, mirroring
+                                // the projection, so projected and consumed service work
+                                // stay replay-equivalent.
                                 consume_service_work(
                                     request,
-                                    static_cast<
-                                        std::uint64_t>(
+                                    std::max<std::uint64_t>(
+                                        1,
+                                        static_cast<std::uint64_t>(
                                             selected[
                                                 field_index]
                                                 ->suffix_tokens
-                                                .size()));
+                                                .size())));
                             }
 
                             node_index =
@@ -1372,7 +1378,7 @@ private:
                         complete_cancelled(
                             request);
 
-                        return true;
+                        return std::nullopt;
                     }
 
                     ++node_index;
@@ -1394,8 +1400,10 @@ private:
 
                 consume_service_work(
                     request,
-                    static_cast<std::uint64_t>(
-                        field.suffix_tokens.size()));
+                    std::max<std::uint64_t>(
+                        1,
+                        static_cast<std::uint64_t>(
+                            field.suffix_tokens.size())));
 
                 ++node_index;
             }
@@ -1407,11 +1415,15 @@ private:
                     request->submitted)
                     .count();
 
-            complete_decision_success(
-                request,
-                std::move(result));
-
-            return true;
+            // Issue-55 M1 fix: do NOT publish the decision result here. Publishing
+            // here (the old `complete_decision_success`) set `done=true` and woke the
+            // consumer *before* the target commit ran, so the consumer's
+            // `wait_for_decision` could `std::move(request->decision_result)` on its
+            // thread while this worker thread still read `decision_result.fields`
+            // during the commit -- a publication-before-commit race (use-after-move +
+            // data race). Return the worker-owned result to `resolve_prefill_step`,
+            // which publishes only after commit/readiness settles exactly once.
+            return std::make_optional(std::move(result));
 
         } catch (...) {
             // Decision probes normally restore the retained frontier before
@@ -1426,7 +1438,10 @@ private:
                 request,
                 std::current_exception());
 
-            return true;
+            // Issue-55 M1: a probe failure is completed as a request-local failure;
+            // it must not propagate to the worker's catch (which `fail_all`s the whole
+            // engine). No result is published, so return `std::nullopt`.
+            return std::nullopt;
         }
     }
 
@@ -1639,8 +1654,36 @@ private:
             // The sampled prefill token is intentionally not committed.
             instance_.program->resolve_prefill_lane(lane, true);
 
-            (void)run_decision_request(request);
-            remove_completed_slot(lane);
+            // Issue-55 M1: run the decision and keep the result worker-owned. Do NOT
+            // publish it yet -- the retained decision sequence's target commit must
+            // run (and settle) *before* the result is published, so the consumer
+            // never observes a done-but-uncommitted (or half-moved) decision result.
+            std::optional<DecisionResult> decision = run_decision_request(request);
+
+            // A probe failure already completed this request as a local error and
+            // aborted its (partial) lane; it did not propagate to the worker. The
+            // request slot is recycled (lane freed) on failure too -- matching the
+            // pre-fix unconditional `remove_completed_slot` -- so the lane is not
+            // leaked; nothing is published for this lane.
+            if (!decision) {
+                remove_completed_slot(lane);
+                return;
+            }
+            // Commit target-owned state before result publication. This gate is
+            // also exercised directly by the deterministic host tests.
+            settle_decision_commit(
+                std::move(*decision),
+                instance_.program->speculative_backend() == SpeculativeBackend::Mtp,
+                [&](TokenId winner) { instance_.program->commit_decision_token(lane, winner); },
+                [&](DecisionResult ready) {
+                    remove_completed_slot(lane);
+                    complete_decision_success(request, std::move(ready));
+                },
+                [&](std::exception_ptr error) {
+                    instance_.program->abort_lane(lane);
+                    remove_completed_slot(lane);
+                    complete_error(request, error);
+                });
             return;
         }
 
@@ -2169,6 +2212,7 @@ private:
     }
 
     Instance& instance_;
+
     DeviceContext& device_;
     const std::uint32_t max_concurrency_;
     const std::size_t max_outstanding_;

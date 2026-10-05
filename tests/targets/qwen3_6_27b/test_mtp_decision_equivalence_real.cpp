@@ -62,6 +62,13 @@ ninfer::EngineOptions options_for(
 
     options.enable_vision   = false;
     options.use_cuda_graph  = false;
+    // Issue #55 M1: the RTX5080 (16 GiB) cannot host the 27B token-embedding table
+    // (248320 x 5120, ~2.37 GiB) device-resident together with Q4 weights + 4096 Q4 KV.
+    // Move the table to a host-mapped (UVA, device-dereferenceable) placement so the
+    // MTP Engine path still runs on the 5080; this mirrors the production 27B profile,
+    // which already validates MTP-3 with host-resident embeddings. The embedding table
+    // contents are unchanged, so the MTP depth-1/bridge/warm paths stay functionally identical.
+    options.embedding_host  = true;
 
     return options;
 }

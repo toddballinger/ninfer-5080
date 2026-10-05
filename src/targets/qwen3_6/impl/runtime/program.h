@@ -169,6 +169,10 @@ struct SequenceState {
     std::uint32_t mtp_draft_count = 0;
     bool tail_hidden_valid        = false;
     bool retained                 = false;
+    // M1: exactly-once guard. Latches true when the retained decision sequence has
+    // committed its target-authoritative depth-1 token; a later attempt on the same
+    // lane throws rather than double-appending.
+    bool decision_commit_consumed = false;
     RewriteCheckpoint rewrite_checkpoint;
 };
 
@@ -249,6 +253,12 @@ public:
         std::uint32_t lane,
         std::span<const TokenId> shared_prefix_tokens,
         std::span<const qwen3_6::DecisionWaveProbeSpec> probes);
+
+    // M1: resolve one target-authoritative depth-1 decision winner from a
+    // target-only MTP round onto a retained sequence. Normal pending resolution
+    // folds replay and advances ledger, prefix identity, KV and frontier once;
+    // the lane is then terminal-retained for the next warm prompt.
+    void commit_decision_token(std::uint32_t lane, TokenId winner_token);
 
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
 
@@ -335,7 +345,9 @@ public:
 private:
     [[nodiscard]] DecisionProbeResult
     score_decision_candidates(
-        std::span<const TokenId> candidate_tokens);
+        std::span<const TokenId> candidate_tokens,
+        const Tensor& logits,
+        bool fresh_projection = false);
 
     void clear_lane(SequenceState& sequence, RequestControl& request) noexcept;
     void ordered_reset(SequenceState& sequence);

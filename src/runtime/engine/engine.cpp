@@ -892,10 +892,10 @@ validate_decision_field_variant(
             "decision field name must not be empty");
     }
 
-    if (field.suffix_tokens.empty()) {
-        throw std::invalid_argument(
-            "decision field suffix must not be empty");
-    }
+    // A non-trie (depth-1) decision field with a zero-token suffix is legal: it
+    // scores the field directly at the retained execution frontier and commits its
+    // winner exactly at that frontier. The trie-execution variant keeps its own
+    // strict non-empty-suffix rule, so this relaxation cannot widen the trie path.
 
     for (const TokenId token :
          field.suffix_tokens) {
@@ -1429,8 +1429,14 @@ decision_variant_service_work(
     const runtime::DecisionExecutionVariant& variant) {
 
     if (!variant.trie_plan.has_value()) {
-        return static_cast<std::uint64_t>(
-            variant.suffix_tokens.size());
+        // A zero-suffix (depth-1) field still executes one decision probe at
+        // the retained frontier; project it as one service quantum, mirroring
+        // the executor's max(1, suffix) consumption, so projected and consumed
+        // quanta stay replay-equivalent.
+        return std::max<std::uint64_t>(
+            1,
+            static_cast<std::uint64_t>(
+                variant.suffix_tokens.size()));
     }
 
     std::uint64_t work = 0;
@@ -2773,6 +2779,21 @@ void Engine::reset_memory_peaks() noexcept {
             }
         },
         impl_->executor);
+}
+
+void* Engine::bound_model_instance() const {
+    if (impl_ == nullptr) { return nullptr; }
+    return std::visit(
+        [](const auto& target) -> void* {
+            if (target == nullptr) { return nullptr; }
+            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*target)>,
+                                         targets::Qwen3_6_27BInstance>) {
+                return target.get();
+            } else {
+                return nullptr;
+            }
+        },
+        impl_->active);
 }
 
 } // namespace ninfer

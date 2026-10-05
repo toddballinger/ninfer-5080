@@ -196,6 +196,10 @@ public:
 private:
     class Impl;
     std::shared_ptr<Impl> impl_;
+
+    // White-box fixture hook; not part of the public Engine interface.
+    [[nodiscard]] void* bound_model_instance() const;
+    friend struct BoundInstanceReader;
 };
 
 } // namespace ninfer

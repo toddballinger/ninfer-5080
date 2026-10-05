@@ -17,6 +17,9 @@ struct DeviceContext;
 
 namespace ninfer::targets::qwen3_6 {
 
+struct Issue55MatchedForceInspector; // test-only friend, no FORCE API
+struct Issue55SelectedCommitInspector; // test-only friend, no decision API
+
 enum class TextPhase {
     Prefill,
     Verify,
@@ -216,6 +219,11 @@ public:
     [[nodiscard]] GenerationTimings generation_timings_lane(std::uint32_t lane) const noexcept;
     [[nodiscard]] SpeculativeStats speculative_stats_lane(std::uint32_t lane) const noexcept;
 
+    // Issue-55 Phase-2 M1: read-only view of the target's speculative backend, so the
+    // engine can gate the exactly-once decision commit to MTP programs (the only backend
+    // with an MTP commit frame) without touching the engine's target-private header.
+    [[nodiscard]] SpeculativeBackend speculative_backend() const noexcept;
+
     [[nodiscard]] DecisionProbeResult
     decision_probe_lane(std::uint32_t lane,
                         std::span<const TokenId> suffix_tokens,
@@ -227,12 +235,16 @@ public:
         std::span<const TokenId> shared_prefix_tokens,
         std::span<const DecisionWaveProbeSpec> probes);
 
+    void commit_decision_token(std::uint32_t lane, TokenId winner_token);
+
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
     void reset_memory_peaks() noexcept;
 
 private:
     explicit Program(std::unique_ptr<detail::ProgramImpl<Variant>> impl) noexcept;
     std::unique_ptr<detail::ProgramImpl<Variant>> impl_;
+    friend struct Issue55MatchedForceInspector;
+    friend struct Issue55SelectedCommitInspector; // test-only, no decision API
 
     template <class V>
     friend std::unique_ptr<Program<V>> create_program(const typename V::ModelView&,

@@ -9,6 +9,10 @@
 #include <cstdint>
 #include <vector>
 
+namespace ninfer::targets::qwen3_6 {
+struct Issue55MatchedForceInspector;
+}
+
 namespace ninfer::targets::qwen3_6::detail {
 
 class ResidentPrefixIdentity {
@@ -22,6 +26,12 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return token_types_.size(); }
 
     [[nodiscard]] bool matches(const PreparedPromptData& prompt, std::size_t count) const;
+
+    // Test-only friend: the Issue55 matched-FORCE fixture reads the exact prefix
+    // identity content (token types, positions, vision items) to prove the two
+    // lanes retain identical prefix provenance. Production code never uses it;
+    // no production behavior changes.
+    friend struct ::ninfer::targets::qwen3_6::Issue55MatchedForceInspector;
 
 private:
     std::vector<std::uint8_t> token_types_;

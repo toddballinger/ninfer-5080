@@ -237,6 +237,16 @@ Program<Variant>::decision_probe_wave_lane(
 }
 
 template <>
+void Program<Variant>::commit_decision_token(std::uint32_t lane, TokenId winner_token) {
+    impl_->commit_decision_token(lane, winner_token);
+}
+
+template <>
+SpeculativeBackend Program<Variant>::speculative_backend() const noexcept {
+    return impl_->speculative_backend;
+}
+
+template <>
 MemorySummary Program<Variant>::memory_summary() const noexcept {
     return impl_->memory_summary();
 }
