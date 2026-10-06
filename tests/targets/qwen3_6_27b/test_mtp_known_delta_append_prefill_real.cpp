@@ -162,8 +162,6 @@ void run_span(const char* artifact, std::size_t span, long sequential_us) {
         auto plan = program.plan_request_for_lane(0, prompt, base_plan);
         const auto summary = plan.summary();
 
-        require(summary.prefix_reuse_path == PrefixReusePath::AppendAtFrontier,
-                "candidate did not select AppendAtFrontier");
         require(summary.reusable_prompt_tokens == trunk.size(),
                 "candidate reused more or less than the exact retained prefix");
         require(summary.prompt_tokens == exact_prompt.size(),
@@ -175,6 +173,12 @@ void run_span(const char* artifact, std::size_t span, long sequential_us) {
         const auto started = std::chrono::steady_clock::now();
         auto step = program.start_prefill_lane(
             0, std::move(prompt), std::move(plan), runtime::TransientRegion{});
+        require(step.summary.prefix_reuse_path == PrefixReusePath::AppendAtFrontier,
+                "candidate did not select AppendAtFrontier");
+        require(step.summary.reused_prompt_tokens == trunk.size(),
+                "candidate begin summary reused more or less than the exact retained prefix");
+        require(step.summary.prompt_tokens == exact_prompt.size(),
+                "candidate begin summary prompt size mismatch");
         processed += step.processed_prompt_tokens;
         while (!step.complete) {
             step = program.advance_prefill_lane(0);
