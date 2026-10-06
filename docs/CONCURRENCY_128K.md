@@ -91,8 +91,11 @@ Potential blocker classes:
 - CUDA Graph family allowance;
 - workspace scaling;
 - scheduler/admission constraints;
+- request/token/hidden-state row-association correctness under interleaved decode;
 - allocator/page rounding;
 - another measured runtime reservation.
+
+If the blocker is scheduler/runtime architecture, compare it against the current upstream serving model before authorizing a fork-specific scheduler rewrite. Recent upstream work adds preemptive scheduling, continuation/checkpoint ownership, incremental execution permits, snapshot/replay recovery, mixed-arrival diagnostics and runtime metrics; these are comparison evidence, not automatic port requirements.
 
 ## Required request mixes
 
