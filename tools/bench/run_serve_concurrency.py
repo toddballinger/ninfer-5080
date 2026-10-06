@@ -44,7 +44,13 @@ SATURATION_SEEDS = (
 CORPUS_ORDER_SEED = 20260811
 POINT_ARTIFACT_TYPE = "ninfer_serve_concurrency_bench_point"
 SUMMARY_ARTIFACT_TYPE = "ninfer_serve_concurrency_bench_summary"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+KV_DTYPES = ("bf16", "int8", "q4")
+KV_CACHE_LOG_NAMES = {
+    "bf16": "bf16",
+    "int8": "int8-group64",
+    "q4": "q4-group64",
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -144,6 +150,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="262144",
         metavar="N|auto",
         help="shared Main KV capacity passed to ninfer-serve (default: 262144)",
+    )
+    parser.add_argument(
+        "--kv-dtype",
+        choices=KV_DTYPES,
+        default="q4",
+        help="KV cache storage used by each benchmark point (default: q4; Issue #32 production baseline)",
     )
     parser.add_argument("--prefill-chunk", type=int, default=1024)
     parser.add_argument("--output", type=Path, required=True, help="benchmark output directory")
@@ -306,7 +318,7 @@ def server_command(
         "--request-log-jsonl",
         str(server_log),
         "--kv-dtype",
-        "int8",
+        args.kv_dtype,
         "--no-prefix-reuse",
     ]
     if point.speculative_backend != "none":
@@ -356,7 +368,7 @@ def validate_server_start(
         "pending_timeout_ms": PENDING_TIMEOUT_MS,
         "prefill_chunk": args.prefill_chunk,
         "log_stats_interval_ms": STATS_INTERVAL_MS,
-        "kv_cache": "int8-group64",
+        "kv_cache": KV_CACHE_LOG_NAMES[args.kv_dtype],
         "cuda_graph": True,
         "prefix_reuse": False,
         "speculative_backend": point.speculative_backend,
@@ -637,6 +649,33 @@ def steady_metrics(
     }
 
 
+def percentile(values: Sequence[float], quantile: float) -> float:
+    if not values:
+        raise corpus.CampaignError("cannot compute a percentile from an empty sample")
+    if quantile < 0.0 or quantile > 1.0:
+        raise corpus.CampaignError("percentile quantile must be in [0, 1]")
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def client_latency_metrics(results: Sequence[ClientResult]) -> dict[str, float]:
+    elapsed = [result.elapsed_seconds for result in results]
+    if not elapsed:
+        raise corpus.CampaignError("concurrency point completed no client requests")
+    return {
+        "mean": sum(elapsed) / len(elapsed),
+        "p50": percentile(elapsed, 0.50),
+        "p95": percentile(elapsed, 0.95),
+        "max": max(elapsed),
+    }
+
+
 def client_records(
     results: Sequence[ClientResult], campaign_start: float
 ) -> list[dict[str, Any]]:
@@ -697,6 +736,7 @@ def analyze_point(
     if makespan <= 0.0:
         raise corpus.CampaignError("campaign makespan is not positive")
     metrics: dict[str, Any]
+    latency = client_latency_metrics(results)
     if point.suite == "decode-saturation":
         if any(
             event.get("result", {}).get("finish_reason") != "output_limit"
@@ -707,11 +747,13 @@ def analyze_point(
             )
         metrics = {
             "wave_makespan_seconds": makespan,
+            "request_latency_seconds": latency,
             "steady": steady_metrics(throughput, point.concurrency),
         }
     else:
         metrics = {
             "makespan_seconds": makespan,
+            "request_latency_seconds": latency,
             "requests_per_second": len(results) / makespan,
             "computed_prefill_tokens_per_second": (
                 int(done_totals["computed_prefill_tokens"]) / makespan
@@ -849,6 +891,16 @@ SUMMARY_FIELDS = (
     "computed_prefill_tokens",
     "decode_tokens",
     "average_decode_batch",
+    "latency_mean_seconds",
+    "latency_p50_seconds",
+    "latency_p95_seconds",
+    "latency_max_seconds",
+    "resolved_kv_capacity",
+    "kv_payload_mib",
+    "runtime_reservation_mib",
+    "planned_slack_mib",
+    "cuda_graph_allowance_mib",
+    "cuda_graph_observed_mib",
     "steady_seconds",
     "steady_decode_tokens_per_second",
     "makespan_seconds",
@@ -873,6 +925,26 @@ def summary_row(report: dict[str, Any]) -> dict[str, Any]:
         "computed_prefill_tokens": report["totals"]["computed_prefill_tokens"],
         "decode_tokens": report["totals"]["decode_tokens"],
         "average_decode_batch": report["decode_batch"]["average_size"],
+        "latency_mean_seconds": report["metrics"]["request_latency_seconds"]["mean"],
+        "latency_p50_seconds": report["metrics"]["request_latency_seconds"]["p50"],
+        "latency_p95_seconds": report["metrics"]["request_latency_seconds"]["p95"],
+        "latency_max_seconds": report["metrics"]["request_latency_seconds"]["max"],
+        "resolved_kv_capacity": report.get("engine", {}).get("kv_capacity"),
+        "kv_payload_mib": (
+            float(report.get("memory", {}).get("kv_payload_bytes", 0)) / (1024.0 * 1024.0)
+        ),
+        "runtime_reservation_mib": (
+            float(report.get("memory", {}).get("runtime_reservation_bytes", 0)) / (1024.0 * 1024.0)
+        ),
+        "planned_slack_mib": (
+            float(report.get("memory", {}).get("planned_slack_bytes", 0)) / (1024.0 * 1024.0)
+        ),
+        "cuda_graph_allowance_mib": (
+            float(report.get("memory", {}).get("cuda_graph_allowance_bytes", 0)) / (1024.0 * 1024.0)
+        ),
+        "cuda_graph_observed_mib": (
+            float(report.get("memory", {}).get("cuda_graph_observed_bytes", 0)) / (1024.0 * 1024.0)
+        ),
         "steady_seconds": None,
         "steady_decode_tokens_per_second": None,
         "makespan_seconds": None,
@@ -955,7 +1027,18 @@ def write_summaries(reports: Sequence[dict[str, Any]], output_dir: Path) -> None
         title = f"## {target} / {weights_id} / {mode} / {suite}"
         if suite == "decode-saturation":
             table = markdown_table(
-                ("C", "Requests", "Steady s", "Avg batch", "Decode tok/s", "Speedup"),
+                (
+                    "C",
+                    "Requests",
+                    "Steady s",
+                    "Avg batch",
+                    "Decode tok/s",
+                    "P50 s",
+                    "P95 s",
+                    "KV MiB",
+                    "Slack MiB",
+                    "Speedup",
+                ),
                 [
                     (
                         str(row["concurrency"]),
@@ -963,6 +1046,10 @@ def write_summaries(reports: Sequence[dict[str, Any]], output_dir: Path) -> None
                         format_number(row["steady_seconds"]),
                         format_number(row["average_decode_batch"]),
                         format_number(row["steady_decode_tokens_per_second"], 1),
+                        format_number(row["latency_p50_seconds"]),
+                        format_number(row["latency_p95_seconds"]),
+                        format_number(row["kv_payload_mib"], 1),
+                        format_number(row["planned_slack_mib"], 1),
                         format_number(row["speedup_vs_c1"]),
                     )
                     for row in group
@@ -978,6 +1065,10 @@ def write_summaries(reports: Sequence[dict[str, Any]], output_dir: Path) -> None
                     "Prefill tok/s",
                     "Decode tok/s",
                     "Avg batch",
+                    "P50 s",
+                    "P95 s",
+                    "KV MiB",
+                    "Slack MiB",
                     "Speedup",
                 ),
                 [
@@ -989,6 +1080,10 @@ def write_summaries(reports: Sequence[dict[str, Any]], output_dir: Path) -> None
                         format_number(row["workload_prefill_tokens_per_second"], 1),
                         format_number(row["workload_decode_tokens_per_second"], 1),
                         format_number(row["average_decode_batch"]),
+                        format_number(row["latency_p50_seconds"]),
+                        format_number(row["latency_p95_seconds"]),
+                        format_number(row["kv_payload_mib"], 1),
+                        format_number(row["planned_slack_mib"], 1),
                         format_number(row["speedup_vs_c1"]),
                     )
                     for row in group
