@@ -576,3 +576,19 @@ target_include_directories(ninfer_qwen3_8_27b_mtp_known_delta_sequential_real_te
 target_link_libraries(ninfer_qwen3_8_27b_mtp_known_delta_sequential_real_test PRIVATE CUDA::cudart)
 set_tests_properties(ninfer_qwen3_8_27b_mtp_known_delta_sequential_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
+
+
+# Issue #55 Phase 3 M2 exploration: measure whether the existing
+# AppendAtFrontier suffix-prefill path is already the correct batched target/MTP
+# primitive for deterministic spans 1/4/8/32/128. GPU-only; no production change.
+ninfer_add_test(ninfer_qwen3_8_27b_mtp_known_delta_append_prefill_real_test
+  SOURCES targets/qwen3_6_27b/test_mtp_known_delta_append_prefill_real.cpp
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_qwen3_8_27b_mtp_known_delta_append_prefill_real_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_5_9b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
+target_link_libraries(ninfer_qwen3_8_27b_mtp_known_delta_append_prefill_real_test PRIVATE CUDA::cudart)
+set_tests_properties(ninfer_qwen3_8_27b_mtp_known_delta_append_prefill_real_test
+  PROPERTIES SKIP_RETURN_CODE 77)
