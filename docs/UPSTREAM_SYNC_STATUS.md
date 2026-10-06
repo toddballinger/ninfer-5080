@@ -106,6 +106,16 @@ The following upstream work was identified during the 2026-09-20 review but was 
 | `1d8587bc`, `05507ab0`, `5f5fccab` | `DEFER` | NVFP4/W4A4 improvements. Useful upstream work, but not part of the current validated mixed-Q4 true-128K artifact. |
 | `b9219f3f` → `98dada0e` → `8eaed538` | `DEFER` | Custom Jinja/chat-template stack and literal-content fix. Desirable for serving compatibility, but large enough to treat as a separate frontend integration milestone. |
 
+## Current queue precedence — 2026-10-06
+
+The historical upstream checkpoint and kernel observations below remain valid provenance, but they no longer define the immediate execution order.
+
+The current bounded P1 gate is issue #32: qualify the **existing Q4-group64 C2 operating point** at a 131072 per-request logical ceiling before starting another narrow kernel implementation or a rotated-E8 codec port. Preserve MTP-3, Vision-2048 and CUDA Graph, and classify any failure as KV-capacity, per-lane Graph/workspace/state, admission/accounting, or scheduler/runtime architecture.
+
+If current Q4 C2 is blocked by scheduler/runtime architecture, compare the blocker against the newer upstream serving work already folded into issue #17 before authorizing a fork-specific serving subsystem. If it is blocked by memory/KV capacity, issue #32 may proceed to rk4v4-e8 and then rk2v4-e8 only if justified. If C2 qualifies, return to the kernel queue headed by #18 -> #48 -> #30.
+
+Accordingly, any older statement below naming the Q3/A8 retune as the unconditional “next performance priority” should be read as a **kernel-lane priority after the C2 gate**, not as the repository-wide immediate next action.
+
 ## Hot-path follow-up after the 118,001-token production trace
 
 The exact true-128K qualification also identifies the operators worth prioritising for future performance work:
