@@ -83,7 +83,7 @@ WARMUP_FIXTURE = "text_smoke_zh"
 RUN_ARTIFACT_TYPE = "ninfer_serve_corpus_result"
 RUN_SCHEMA_VERSION = 5
 SERVER_LOG_ARTIFACT_TYPE = "ninfer_serve_request_log"
-SERVER_LOG_SCHEMA_VERSION = 9
+SERVER_LOG_SCHEMA_VERSION = 11
 STARTUP_TIMEOUT_SECONDS = 1800.0
 REQUEST_TIMEOUT_SECONDS = 24.0 * 60.0 * 60.0
 LOG_EVENT_TIMEOUT_SECONDS = 10.0
@@ -453,6 +453,67 @@ def post_json(connection: http.client.HTTPConnection, payload: dict[str, Any]) -
     return receive_json(connection)
 
 
+def require_integer(value: Any, name: str, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise CampaignError(f"{name} must be an integer >= {minimum}: {value!r}")
+    return value
+
+
+def require_seconds(value: Any, name: str) -> float:
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise CampaignError(f"{name} must be finite nonnegative seconds: {value!r}")
+    return float(value)
+
+
+def require_fields(actual: Any, expected: dict[str, Any], name: str) -> None:
+    if not isinstance(actual, dict):
+        raise CampaignError(f"{name} must be an object")
+    for key, value in expected.items():
+        found = actual.get(key)
+        if type(found) is not type(value) or found != value:
+            raise CampaignError(f"{name}.{key} mismatch: {found!r}; expected {value!r}")
+
+
+MEMORY_METRICS = (
+    "kv_payload_bytes", "runtime_reservation_bytes", "planned_slack_bytes",
+    "cuda_graph_allowance_bytes", "cuda_graph_observed_bytes",
+)
+
+
+def validate_startup_metrics(event: dict[str, Any]) -> None:
+    engine = event.get("engine")
+    if not isinstance(engine, dict):
+        raise CampaignError("server_start.engine must be an object")
+    for name, minimum in (("device", 0), ("max_context", 1), ("kv_capacity", 1),
+                          ("prefill_chunk", 1), ("speculative_draft_window", 0)):
+        require_integer(engine.get(name), f"engine.{name}", minimum)
+    for name, minimum in (("max_concurrency", 1), ("max_pending_requests", 0),
+                          ("pending_timeout_ms", 0), ("log_stats_interval_ms", 0)):
+        require_integer(engine.get(name), f"engine.{name}", minimum)
+    memory = event.get("memory")
+    if not isinstance(memory, dict):
+        raise CampaignError("server_start.memory must be an object")
+    for name in MEMORY_METRICS:
+        require_integer(memory.get(name), f"memory.{name}")
+
+
+def validate_request_metrics(event: dict[str, Any], backend: str, window: int) -> None:
+    require_server_log_identity(event, "request_done")
+    try:
+        for name in ("prompt_tokens", "completion_tokens", "computed_prefill_tokens"):
+            require_integer(event["result"][name], f"result.{name}")
+        for name in ("prepare", "ttft", "vision", "prefill", "decode", "total"):
+            require_seconds(event["timings_seconds"][name], f"timings_seconds.{name}")
+        speculative = event["speculative"]
+        require_fields(speculative, {"backend": backend, "draft_window": window}, "speculative")
+        for name in ("rounds", "drafted_tokens", "accepted_tokens", "fallback_steps"):
+            require_integer(speculative[name], f"speculative.{name}")
+        if speculative["accepted_tokens"] > speculative["drafted_tokens"]:
+            raise CampaignError("speculative.accepted_tokens exceeds drafted_tokens")
+    except (KeyError, TypeError) as exc:
+        raise CampaignError(f"request_done is missing required metrics: {exc}") from exc
+
+
 def require_server_log_identity(event: dict[str, Any], event_name: str) -> None:
     identity = (
         event.get("artifact_type"),
@@ -460,25 +521,14 @@ def require_server_log_identity(event: dict[str, Any], event_name: str) -> None:
         event.get("event"),
     )
     expected = (SERVER_LOG_ARTIFACT_TYPE, SERVER_LOG_SCHEMA_VERSION, event_name)
-    if identity != expected:
+    if type(event.get("schema_version")) is not int or identity != expected:
         raise CampaignError(f"unexpected serving log identity {identity!r}; expected {expected!r}")
 
 
 def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> tuple[str, str]:
     require_server_log_identity(event, "server_start")
-    engine = event.get("engine", {})
-    actual = {
-        "device": engine.get("device"),
-        "max_context": engine.get("max_context"),
-        "kv_capacity": engine.get("kv_capacity"),
-        "prefill_chunk": engine.get("prefill_chunk"),
-        "kv_cache": engine.get("kv_cache"),
-        "cuda_graph": engine.get("cuda_graph"),
-        "prefix_reuse": engine.get("prefix_reuse"),
-        "speculative_backend": engine.get("speculative_backend"),
-        "speculative_draft_window": engine.get("speculative_draft_window"),
-        "proposal_head": engine.get("proposal_head"),
-    }
+    validate_startup_metrics(event)
+    engine = event["engine"]
     expected = {
         "device": device,
         "max_context": 262144,
@@ -491,12 +541,9 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         "speculative_draft_window": spec.draft_tokens,
         "proposal_head": "optimized" if spec.draft_tokens else "full",
     }
-    if actual != expected:
-        raise CampaignError(f"server_start Engine configuration mismatch: {actual!r}")
-    if event.get("sampling_defaults", {}).get("greedy") != (
-        spec.sampling_mode == "greedy"
-    ):
-        raise CampaignError("server_start sampling mode does not match the campaign")
+    require_fields(engine, expected, "engine")
+    require_fields(event.get("sampling_defaults"),
+                   {"greedy": spec.sampling_mode == "greedy"}, "sampling_defaults")
     if event.get("artifact", {}).get("target") != spec.target:
         raise CampaignError(
             "loaded artifact target mismatch: "
@@ -527,6 +574,7 @@ def build_result_record(
     server_event: dict[str, Any],
 ) -> dict[str, Any]:
     require_server_log_identity(server_event, "request_done")
+    validate_request_metrics(server_event, spec.speculative_backend, spec.draft_tokens)
     request = server_event.get("request", {})
     result = server_event.get("result", {})
     timings = server_event.get("timings_seconds", {})
@@ -544,24 +592,21 @@ def build_result_record(
         "enable_thinking": request.get("enable_thinking"),
         "seed": request.get("sampling", {}).get("seed"),
     }
-    if actual_request != expected_request:
-        raise CampaignError(
-            f"request_done does not match the submitted request: {actual_request!r}"
-        )
+    require_fields(actual_request, expected_request, "request_done.request")
 
     try:
-        prompt_tokens = int(result["prompt_tokens"])
-        completion_tokens = int(result["completion_tokens"])
-        prepare_seconds = float(timings["prepare"])
-        vision_seconds = float(timings["vision"])
-        prefill_seconds = float(timings["prefill"])
-        decode_seconds = float(timings["decode"])
-        total_seconds = float(timings["total"])
+        prompt_tokens = require_integer(result["prompt_tokens"], "result.prompt_tokens")
+        completion_tokens = require_integer(result["completion_tokens"], "result.completion_tokens")
+        prepare_seconds = require_seconds(timings["prepare"], "timings_seconds.prepare")
+        vision_seconds = require_seconds(timings["vision"], "timings_seconds.vision")
+        prefill_seconds = require_seconds(timings["prefill"], "timings_seconds.prefill")
+        decode_seconds = require_seconds(timings["decode"], "timings_seconds.decode")
+        total_seconds = require_seconds(timings["total"], "timings_seconds.total")
         backend = str(speculative["backend"])
-        speculative_rounds = int(speculative["rounds"])
-        drafted_tokens = int(speculative["drafted_tokens"])
-        accepted_tokens = int(speculative["accepted_tokens"])
-        fallback_steps = int(speculative["fallback_steps"])
+        speculative_rounds = require_integer(speculative["rounds"], "speculative.rounds")
+        drafted_tokens = require_integer(speculative["drafted_tokens"], "speculative.drafted_tokens")
+        accepted_tokens = require_integer(speculative["accepted_tokens"], "speculative.accepted_tokens")
+        fallback_steps = require_integer(speculative["fallback_steps"], "speculative.fallback_steps")
     except (KeyError, TypeError, ValueError) as exc:
         raise CampaignError(f"request_done is missing required metrics: {exc}") from exc
 
@@ -572,6 +617,8 @@ def build_result_record(
         )
 
     usage = response.get("usage", {})
+    require_integer(usage.get("prompt_tokens"), "usage.prompt_tokens")
+    require_integer(usage.get("completion_tokens"), "usage.completion_tokens")
     if (
         usage.get("prompt_tokens") != prompt_tokens
         or usage.get("completion_tokens") != completion_tokens

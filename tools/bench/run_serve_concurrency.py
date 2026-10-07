@@ -563,7 +563,8 @@ def validate_server_start(
     event: dict[str, Any], point: Point, args: argparse.Namespace
 ) -> tuple[str, str]:
     corpus.require_server_log_identity(event, "server_start")
-    engine = event.get("engine", {})
+    corpus.validate_startup_metrics(event)
+    engine = event["engine"]
     expected = {
         "device": args.device,
         "max_context": args.max_context,
@@ -575,7 +576,6 @@ def validate_server_start(
         "log_stats_interval_ms": STATS_INTERVAL_MS,
         "kv_cache": KV_CACHE_LOG_NAMES[args.kv_dtype],
         "vision": not args.no_vision,
-        "vision_max_tokens": args.vision_max_tokens,
         "cuda_graph": True,
         "prefix_reuse": True,
         "speculative_backend": point.speculative_backend,
@@ -584,40 +584,22 @@ def validate_server_start(
         # LM-head proposal path is used for speculative points.
         "proposal_head": "full",
     }
-    actual = {name: engine[name] for name in expected if name in engine}
-    if actual != expected or any(name not in engine for name in expected):
-        raise corpus.CampaignError(f"server_start Engine configuration mismatch: {actual!r}")
-    # Numeric engine.kv_capacity enforcement: kv_capacity_mode alone cannot discriminate a
-    # material capacity (e.g. 16384 vs 131072 both report "explicit"); for an explicit numeric
-    # request the serve must report that exact capacity (the Issue #32 commit-gate finding).
+    corpus.require_fields(engine, expected, "engine")
     if args.kv_capacity != "auto":
-        kv = engine.get("kv_capacity")
-        if isinstance(kv, int) and kv != int(args.kv_capacity):
-            raise corpus.CampaignError(
-                f"server_start numeric kv_capacity mismatch: engine={kv!r} requested={args.kv_capacity}"
-            )
-        if not isinstance(kv, int):
-            raise corpus.CampaignError(
-                f"server_start kv_capacity must be a positive integer when an explicit capacity is requested: engine={kv!r} requested={args.kv_capacity}"
-            )
-    if event.get("sampling_defaults", {}).get("greedy") != (
-        point.sampling_mode == "greedy"
-    ):
-        raise corpus.CampaignError("server_start sampling mode does not match the point")
-    if event.get("server", {}).get("default_thinking_budget") != args.default_thinking_budget:
-        raise corpus.CampaignError(
-            "server_start default_thinking_budget does not match the point"
-        )
-    # Embedding host: production pins the embedding table in host memory; the serve must report it.
-    if engine.get("embedding_host") != (not args.no_embedding_host):
-        raise corpus.CampaignError(
-            f"server_start embedding_host does not match the request: engine={engine.get('embedding_host')!r} requested={not args.no_embedding_host!r}"
-        )
-    # Prefix checkpoint policy: production runs rolling-tool; the serve must report the same.
-    if event.get("server", {}).get("prefix_checkpoint_policy") != "rolling-tool":
-        raise corpus.CampaignError(
-            f"server_start prefix_checkpoint_policy does not match production: {event.get('server', {}).get('prefix_checkpoint_policy')!r}; expected rolling-tool"
-        )
+        corpus.require_fields(engine, {"kv_capacity": int(args.kv_capacity)}, "engine")
+    argv = event.get("argv")
+    if not isinstance(argv, list) or not argv or any(type(token) is not str for token in argv):
+        raise corpus.CampaignError("server_start.argv must be a nonempty string array")
+    if ("--embedding-host" in argv) != (not args.no_embedding_host):
+        raise corpus.CampaignError("server_start argv embedding_host mismatch")
+    if not args.no_vision and _flag_value(argv, "--vision-max-tokens") != str(args.vision_max_tokens):
+        raise corpus.CampaignError("server_start argv vision_max_tokens mismatch")
+    if _flag_value(argv, "--prefix-checkpoint-policy") != "rolling-tool":
+        raise corpus.CampaignError("server_start argv prefix_checkpoint_policy mismatch")
+    corpus.require_fields(event.get("sampling_defaults"),
+                          {"greedy": point.sampling_mode == "greedy"}, "sampling_defaults")
+    corpus.require_fields(event.get("server"),
+                          {"default_thinking_budget": args.default_thinking_budget}, "server")
     if event.get("artifact", {}).get("target") != point.target:
         raise corpus.CampaignError("loaded artifact target does not match the point")
     if event.get("server", {}).get("public_model_id") != point.model_id:
@@ -638,8 +620,8 @@ def parse_client_response(
     try:
         usage = response["usage"]
         choices = response["choices"]
-        prompt_tokens = int(usage["prompt_tokens"])
-        completion_tokens = int(usage["completion_tokens"])
+        prompt_tokens = corpus.require_integer(usage["prompt_tokens"], "usage.prompt_tokens")
+        completion_tokens = corpus.require_integer(usage["completion_tokens"], "usage.completion_tokens")
         finish_reason = str(choices[0]["finish_reason"])
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise corpus.CampaignError(f"invalid Chat Completions response: {exc}") from exc
@@ -776,7 +758,9 @@ def load_server_events(path: Path, server_instance_id: str) -> list[dict[str, An
     return events
 
 
-def sum_request_done(events: Sequence[dict[str, Any]]) -> dict[str, int | float | None]:
+def sum_request_done(
+    events: Sequence[dict[str, Any]], backend: str, window: int
+) -> dict[str, int | float | None]:
     prompt_tokens = 0
     completion_tokens = 0
     computed_prefill_tokens = 0
@@ -787,17 +771,18 @@ def sum_request_done(events: Sequence[dict[str, Any]]) -> dict[str, int | float 
     decode_tokens = 0
     for event in events:
         try:
+            corpus.validate_request_metrics(event, backend, window)
             result = event["result"]
             speculative = event["speculative"]
-            prompt_tokens += int(result["prompt_tokens"])
-            request_completion_tokens = int(result["completion_tokens"])
+            prompt_tokens += corpus.require_integer(result["prompt_tokens"], "result.prompt_tokens")
+            request_completion_tokens = corpus.require_integer(result["completion_tokens"], "result.completion_tokens")
             completion_tokens += request_completion_tokens
             decode_tokens += max(request_completion_tokens - 1, 0)
-            computed_prefill_tokens += int(result["computed_prefill_tokens"])
-            speculative_rounds += int(speculative["rounds"])
-            drafted_tokens += int(speculative["drafted_tokens"])
-            accepted_tokens += int(speculative["accepted_tokens"])
-            fallback_steps += int(speculative["fallback_steps"])
+            computed_prefill_tokens += corpus.require_integer(result["computed_prefill_tokens"], "result.computed_prefill_tokens")
+            speculative_rounds += corpus.require_integer(speculative["rounds"], "speculative.rounds")
+            drafted_tokens += corpus.require_integer(speculative["drafted_tokens"], "speculative.drafted_tokens")
+            accepted_tokens += corpus.require_integer(speculative["accepted_tokens"], "speculative.accepted_tokens")
+            fallback_steps += corpus.require_integer(speculative["fallback_steps"], "speculative.fallback_steps")
         except (KeyError, TypeError, ValueError) as exc:
             raise corpus.CampaignError(f"request_done event is missing metrics: {exc}") from exc
     return {
@@ -822,10 +807,12 @@ def sum_throughput(events: Sequence[dict[str, Any]]) -> dict[str, int | float | 
     decode_row_rounds = 0
     for event in events:
         try:
-            computed_prefill_tokens += int(event["tokens"]["computed_prefill"])
-            committed_decode_tokens += int(event["tokens"]["committed_decode"])
-            decode_rounds += int(event["decode_batch"]["rounds"])
-            decode_row_rounds += int(event["decode_batch"]["row_rounds"])
+            corpus.require_server_log_identity(event, "throughput")
+            corpus.require_seconds(event["interval_seconds"], "interval_seconds")
+            computed_prefill_tokens += corpus.require_integer(event["tokens"]["computed_prefill"], "tokens.computed_prefill")
+            committed_decode_tokens += corpus.require_integer(event["tokens"]["committed_decode"], "tokens.committed_decode")
+            decode_rounds += corpus.require_integer(event["decode_batch"]["rounds"], "decode_batch.rounds")
+            decode_row_rounds += corpus.require_integer(event["decode_batch"]["row_rounds"], "decode_batch.row_rounds")
         except (KeyError, TypeError, ValueError) as exc:
             raise corpus.CampaignError(f"throughput event is missing counters: {exc}") from exc
     return {
@@ -844,14 +831,14 @@ def is_steady_interval(event: dict[str, Any], concurrency: int) -> bool:
         tokens = event["tokens"]
         batch = event["decode_batch"]
         scheduler = event["scheduler"]
-        rounds = int(batch["rounds"])
+        rounds = corpus.require_integer(batch["rounds"], "batch.rounds")
         return (
-            int(tokens["computed_prefill"]) == 0
+            corpus.require_integer(tokens["computed_prefill"], "tokens.computed_prefill") == 0
             and rounds > 0
-            and int(batch["row_rounds"]) == concurrency * rounds
-            and int(scheduler["running"]) == concurrency
-            and int(scheduler["prefilling"]) == 0
-            and int(scheduler["decode_ready"]) == concurrency
+            and corpus.require_integer(batch["row_rounds"], "batch.row_rounds") == concurrency * rounds
+            and corpus.require_integer(scheduler["running"], "scheduler.running") == concurrency
+            and corpus.require_integer(scheduler["prefilling"], "scheduler.prefilling") == 0
+            and corpus.require_integer(scheduler["decode_ready"], "scheduler.decode_ready") == concurrency
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise corpus.CampaignError(
@@ -868,10 +855,10 @@ def steady_metrics(
             f"concurrency {concurrency} produced no complete full-batch decode interval; "
             "increase --decode-tokens"
         )
-    duration = sum(float(event["interval_seconds"]) for event in selected)
-    tokens = sum(int(event["tokens"]["committed_decode"]) for event in selected)
-    rounds = sum(int(event["decode_batch"]["rounds"]) for event in selected)
-    row_rounds = sum(int(event["decode_batch"]["row_rounds"]) for event in selected)
+    duration = sum(corpus.require_seconds(event["interval_seconds"], "interval_seconds") for event in selected)
+    tokens = sum(corpus.require_integer(event["tokens"]["committed_decode"], "tokens.committed_decode") for event in selected)
+    rounds = sum(corpus.require_integer(event["decode_batch"]["rounds"], "decode_batch.rounds") for event in selected)
+    row_rounds = sum(corpus.require_integer(event["decode_batch"]["row_rounds"], "decode_batch.row_rounds") for event in selected)
     if duration <= 0.0 or rounds <= 0:
         raise corpus.CampaignError("steady decode interval has no measurable duration or rounds")
     return {
@@ -944,6 +931,7 @@ def analyze_point(
     campaign_start: float,
     campaign_end: float,
 ) -> dict[str, Any]:
+    corpus.validate_startup_metrics(server_start)
     errors = [event for event in events if event.get("event") == "request_error"]
     if errors:
         message = errors[0].get("error", {}).get("message", "unknown request error")
@@ -955,7 +943,7 @@ def analyze_point(
             f"server recorded {len(request_done)} completed request(s), expected {len(results)}"
         )
 
-    done_totals = sum_request_done(request_done)
+    done_totals = sum_request_done(request_done, point.speculative_backend, point.draft_tokens)
     runtime_totals = sum_throughput(throughput)
     client_prompt = sum(result.prompt_tokens for result in results)
     client_completion = sum(result.completion_tokens for result in results)
@@ -1015,7 +1003,7 @@ def analyze_point(
         "command": list(command),
         "server_log": str(server_log),
         "engine": server_start.get("engine", {}),
-        "memory": server_start.get("memory", {}),
+        "memory": server_start["memory"],
         "environment": server_start.get("environment", {}),
         "totals": done_totals,
         "decode_batch": {
@@ -1148,6 +1136,7 @@ SUMMARY_FIELDS = (
 
 
 def summary_row(report: dict[str, Any]) -> dict[str, Any]:
+    corpus.validate_startup_metrics(report)
     row = {
         "suite": report["suite"],
         "target": report["target"],
@@ -1167,19 +1156,19 @@ def summary_row(report: dict[str, Any]) -> dict[str, Any]:
         "latency_max_seconds": report["metrics"]["request_latency_seconds"]["max"],
         "resolved_kv_capacity": report.get("engine", {}).get("kv_capacity"),
         "kv_payload_mib": (
-            float(report.get("memory", {}).get("kv_payload_bytes", 0)) / (1024.0 * 1024.0)
+            report["memory"]["kv_payload_bytes"] / (1024.0 * 1024.0)
         ),
         "runtime_reservation_mib": (
-            float(report.get("memory", {}).get("runtime_reservation_bytes", 0)) / (1024.0 * 1024.0)
+            report["memory"]["runtime_reservation_bytes"] / (1024.0 * 1024.0)
         ),
         "planned_slack_mib": (
-            float(report.get("memory", {}).get("planned_slack_bytes", 0)) / (1024.0 * 1024.0)
+            report["memory"]["planned_slack_bytes"] / (1024.0 * 1024.0)
         ),
         "cuda_graph_allowance_mib": (
-            float(report.get("memory", {}).get("cuda_graph_allowance_bytes", 0)) / (1024.0 * 1024.0)
+            report["memory"]["cuda_graph_allowance_bytes"] / (1024.0 * 1024.0)
         ),
         "cuda_graph_observed_mib": (
-            float(report.get("memory", {}).get("cuda_graph_observed_bytes", 0)) / (1024.0 * 1024.0)
+            report["memory"]["cuda_graph_observed_bytes"] / (1024.0 * 1024.0)
         ),
         "steady_seconds": None,
         "steady_decode_tokens_per_second": None,
