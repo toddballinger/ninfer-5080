@@ -623,3 +623,43 @@ CUDA Graph:    disabled
 
 Additional NInfer CLI options can be appended after the model path to compare a
 runtime feature against the same immutable fixture and configuration.
+
+## Issue #55 Phase 3 M2 diagnostic checkpoint — aligned P62 GDN formation
+
+Phase 3 M2 has reached an accepted diagnostic checkpoint on the known-delta `AppendAtFrontier` path.
+
+```text
+BRANCH=feature/issue55-phase3-m2-batched-known-delta
+IMPLEMENTATION_COMMIT=2ddf1729fe8ae706bd75a9afaf8f6527c705c7f5
+ASTRA_PHASE3_M2=PASS
+HUMAN_REVIEW_READY=YES
+GPU_RERUN_REQUIRED=NO
+```
+
+The accepted paired capture compares the candidate Verify formation at **column 0** with the independent-reference prefill formation at **column 62**, both representing the same **63-consumed-token / P62 frontier**.
+
+Observer schemas:
+
+```text
+candidate: phase/action=9, width=4, batch=1, slot=0, exact_records=21
+reference: phase/action=1, width=63, batch=1, slot=0, exact_records=17
+```
+
+The four candidate-only `record_*` entries are replay/speculation records and are not treated as committed reference state.
+
+Aligned offline comparison:
+
+```text
+x_entry = MATCH
+h       = MATCH
+g       = FIRST_OBSERVED_COMPARABLE_DIVERGENCE
+g differing values = 44 / 48 F32
+g max_abs_diff      = 7.15e-7
+```
+
+Interpretation is deliberately narrow: this localizes the earliest observed comparable divergence in the captured formation chain to `g`. It **does not prove a root-cause operator**, and it **does not establish that the underlying continuation mismatch is fixed**.
+
+The final committed scope was cleaned before publication: unrelated M3/V1 bracket diagnostics, P1-P4/FNV/full-KV snapshot machinery, and unnecessary propagation were removed; the required candidate phase-9/21-record and reference phase-1/17-record observer paths were preserved. Focused host build and diff hygiene passed, followed by Astra diff-only acceptance.
+
+Temporary capture binaries, offline decoder/report/CSV, Luna logs, and audit artifacts remain qualification evidence rather than repository source.
+
