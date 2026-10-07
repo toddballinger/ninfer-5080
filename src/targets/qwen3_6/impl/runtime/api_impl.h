@@ -258,6 +258,27 @@ MemorySummary Program<Variant>::memory_summary() const noexcept {
 }
 
 template <>
+void Program<Variant>::set_gdn_mix_observer(std::int32_t target_position, std::int32_t target_layer) {
+    impl_->set_gdn_mix_observer(target_position, target_layer);
+}
+template <>
+std::uint8_t* Program<Variant>::gdn_capture_image() const noexcept {
+    return impl_->gdn_capture_image();
+}
+template <>
+std::int64_t Program<Variant>::gdn_capture_bytes() const noexcept {
+    return impl_->gdn_capture_bytes();
+}
+template <>
+bool Program<Variant>::gdn_mix_observer_armed() const noexcept {
+    return impl_->gdn_mix_observer_armed();
+}
+template <>
+bool Program<Variant>::gdn_mix_observer_fired() const noexcept {
+    return impl_->gdn_mix_observer_fired();
+}
+
+template <>
 void Program<Variant>::reset_memory_peaks() noexcept {
     impl_->reset_memory_peaks();
 }

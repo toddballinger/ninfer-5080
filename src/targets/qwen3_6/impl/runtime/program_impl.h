@@ -444,6 +444,16 @@ ProgramImplCore::~ProgramImplCore() noexcept {
     }
 }
 
+void ProgramImplCore::set_gdn_mix_observer(std::int32_t position, std::int32_t layer) {
+    if (position != 62 || layer != 0 || use_cuda_graph) {
+        throw std::invalid_argument("gdn observer requires layer0/P62 and eager execution");
+    }
+    if (gdn_observer_.armed) throw std::logic_error("gdn observer is single-shot");
+    gdn_observer_.host.emplace(schedule::GdnMixObserver::capacity);
+    std::memset(gdn_observer_.image(), 0, schedule::GdnMixObserver::payload_offset);
+    gdn_observer_.armed = true;
+}
+
 bool ProgramImplCore::can_admit_lane(std::uint32_t lane, const RequestPlan& plan) const noexcept {
     if (lane >= max_concurrency || plan.impl_ == nullptr) { return false; }
     const RequestControl& request = requests[lane];
@@ -2913,7 +2923,8 @@ runtime::PrefillStepResult ProgramImplCore::advance_prefill(SequenceState& seque
                                        device.load_stream,
                                        &replay_ready_events,
                                        &replay_free_events, io, prefill_hidden, prefill_chunk,
-             proposal_head},
+             proposal_head,
+             gdn_observer_.armed ? &gdn_observer_ : nullptr},
             text_kv_view(sequence),
             mtp_kv_view(sequence),
             decoder->text_kv,
@@ -3487,7 +3498,8 @@ ProgramImplCore::decode_mtp_batch(std::span<const std::uint32_t> lanes,
                                        device.load_stream,
                                        &replay_ready_events,
                                        &replay_free_events, io,
-                                                  prefill_hidden, prefill_chunk, proposal_head},
+                                                  prefill_hidden, prefill_chunk, proposal_head,
+                                                  gdn_observer_.armed ? &gdn_observer_ : nullptr},
                                                  decoder->text_kv,
                                                  *decoder->mtp_cache(),
                                                  *io.mtp_decode,

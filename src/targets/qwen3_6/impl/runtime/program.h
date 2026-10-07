@@ -265,6 +265,16 @@ public:
 
     void reset_memory_peaks() noexcept;
 
+    // Diagnostic only: exactly layer0, slot0, absolute cache position 62.
+    void set_gdn_mix_observer(std::int32_t target_position, std::int32_t target_layer);
+    [[nodiscard]] std::uint8_t* gdn_capture_image() const noexcept { return gdn_observer_.image(); }
+    [[nodiscard]] std::int64_t gdn_capture_bytes() const noexcept { return gdn_observer_.bytes; }
+    [[nodiscard]] bool gdn_mix_observer_armed() const noexcept { return gdn_observer_.armed; }
+    [[nodiscard]] bool gdn_mix_observer_fired() const noexcept { return gdn_observer_.fired; }
+    [[nodiscard]] std::int32_t gdn_observer_target_position() const noexcept { return 62; }
+    [[nodiscard]] std::int32_t gdn_observer_target_layer() const noexcept { return 0; }
+    [[nodiscard]] std::int32_t gdn_observer_gidx() const noexcept { return TextConfig::gdn_index(0); }
+
     const LoadedModelData& model;
     DeviceContext& device;
     const std::uint32_t capacity;
@@ -330,6 +340,8 @@ public:
 
     std::optional<PinnedHostBuffer> dflash_rewrite_checkpoint_host;
     std::size_t dflash_rewrite_checkpoint_stride = 0;
+
+    schedule::GdnMixObserver gdn_observer_;
     TokenId* host_tokens = nullptr;
     std::optional<PinnedHostBuffer> ordinary_host;
     qwen3_6::OrdinaryDecodeIngress* ordinary_host_ingress = nullptr;

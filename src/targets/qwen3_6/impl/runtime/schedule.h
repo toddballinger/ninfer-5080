@@ -43,6 +43,7 @@ struct ExecutionCore {
     Tensor& prefill_hidden;
     std::uint32_t prefill_chunk;
     ProposalHead proposal_head;
+    GdnMixObserver* gdn_observer = nullptr;
 };
 
 struct PrefillContext {

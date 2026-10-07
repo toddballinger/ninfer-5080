@@ -73,6 +73,10 @@ PrefillChunkResult prefill_text_chunk(
                      state.text_kv, state.execution.linear_attention, state.execution.io,
                      state.execution.prefill_hidden, state.execution.prefill_chunk,
                      state.text_kv_base, state.mtp_kv, &state.text_cache, state.mtp_cache);
+    // Direct staged text-prefill attachment; no diagnostic work when unarmed.
+    if (state.execution.gdn_observer != nullptr && state.execution.gdn_observer->armed) {
+        card.set_gdn_mix_observer(state.execution.gdn_observer);
+    }
     configure_text_card(card, state.execution, state.sampling, state.current_state_slot,
                         state.rewrite_checkpoint_state_host, state.mtp_proposal_extent);
     card.set_rewrite_checkpoint_hidden_output(state.rewrite_checkpoint_hidden);

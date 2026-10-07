@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -150,6 +151,33 @@ struct DFlashFeatureSink {
 
 class VisionPrefillSession;
 
+// Issue #55: single-shot, test-selected layer0/slot0/P62 formation image.
+// Native little-endian u32 schema: header (11 words): magic-low, phase/action
+// flags (bit0 verify, bit3 RecordForReplay), position, gidx, layers, count,
+// payload bytes, width, batch, slot, slot_count. Fixed record table follows:
+// 10 words/40 bytes per record: key length (without NUL), absolute key offset,
+// value bytes, absolute value offset, slot, dtype, ne[0..3]. Keys start at
+// 4096; contiguous tensor payloads at 8192. All offsets are image-relative.
+struct GdnMixObserver {
+    static constexpr std::uint32_t magic = 0x53455253U;
+    static constexpr std::size_t header_bytes = 44;
+    static constexpr std::size_t record_bytes = 40;
+    static constexpr std::size_t max_records = 32;
+    static constexpr std::size_t key_offset = 4096;
+    static constexpr std::size_t payload_offset = 8192;
+    static constexpr std::size_t capacity = 1 << 24;
+    static_assert(header_bytes + max_records * record_bytes <= key_offset);
+    std::optional<PinnedHostBuffer> host;
+    std::size_t bytes = 0;
+    std::size_t key_cursor = key_offset;
+    std::uint32_t count = 0;
+    bool armed = false;
+    bool fired = false;
+    [[nodiscard]] std::uint8_t* image() const noexcept {
+        return host ? static_cast<std::uint8_t*>(host->data()) : nullptr;
+    }
+};
+
 class TextContext {
 public:
     TextContext(DeviceContext& ctx, const LoadedModelData& weights, WorkspaceArena& work,
@@ -186,6 +214,10 @@ public:
     void set_rewrite_checkpoint_state_host(void* host) noexcept {
         rewrite_checkpoint_state_host_ = host;
     }
+    void set_gdn_mix_observer(GdnMixObserver* observer) noexcept {
+        gdn_observer_ = observer;
+    }
+
     void set_gdn_state_action(
         GdnStateAction action,
         const GdnReplayRecords* replay_records,
@@ -325,6 +357,11 @@ private:
     std::int64_t prefill_rewrite_checkpoint_frontier_     = -1;
     Tensor* rewrite_checkpoint_hidden_output_             = nullptr;
     std::uint32_t mtp_proposal_extent_                    = 0;
+
+    GdnMixObserver* gdn_observer_ = nullptr;
+    bool begin_gdn_observation(const Tensor& x, int gidx, Phase ph);
+    void capture_gdn_tensor(const char* key, const Tensor& tensor);
+    void finish_gdn_observation();
 
     const Weight* embed_                        = nullptr;
     const Tensor* final_norm_                   = nullptr;

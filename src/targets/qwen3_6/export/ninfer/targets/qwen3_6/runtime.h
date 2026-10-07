@@ -241,6 +241,17 @@ public:
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
     void reset_memory_peaks() noexcept;
 
+    // Issue #55: single-shot diagnostic observer, off by default. Supports only
+    // eager layer0/slot0/absolute cache position 62; image read requires sync.
+    void set_gdn_mix_observer(std::int32_t target_position, std::int32_t target_layer);
+    [[nodiscard]] std::uint8_t* gdn_capture_image() const noexcept;
+    [[nodiscard]] std::int64_t gdn_capture_bytes() const noexcept;
+    [[nodiscard]] bool gdn_mix_observer_armed() const noexcept;
+    [[nodiscard]] bool gdn_mix_observer_fired() const noexcept;
+    [[nodiscard]] std::int32_t gdn_observer_target_position() const noexcept;
+    [[nodiscard]] std::int32_t gdn_observer_target_layer() const noexcept;
+    [[nodiscard]] std::int32_t gdn_observer_gidx() const noexcept;
+
 private:
     explicit Program(std::unique_ptr<detail::ProgramImpl<Variant>> impl) noexcept;
     std::unique_ptr<detail::ProgramImpl<Variant>> impl_;

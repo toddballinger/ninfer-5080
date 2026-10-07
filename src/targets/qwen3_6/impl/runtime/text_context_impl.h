@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
@@ -996,12 +997,26 @@ void TextContext::gdn_mix(const GdnLayerW& w, Tensor& x, int gidx, Phase ph) {
     cudaStream_t s = ctx_.stream;
     const int T    = x.ne[1];
 
+    const bool observing = begin_gdn_observation(x, gidx, ph);
+    if (observing) {
+        capture_gdn_tensor("x_entry", x);
+        capture_gdn_tensor("conv_pre", state_.conv_slot(0, 0));
+        capture_gdn_tensor("rec_pre", state_.recurrent_slot(0, 0));
+        capture_gdn_tensor("conv_weight", *w.conv1d);
+    }
+
     const auto control = workspace_recipe::gdn_control<TextConfig>(work_, T);
     Tensor h           = control.hidden;
     Tensor g           = control.g;
     Tensor beta        = control.beta;
     Variant::gdn_norm_control_projection(x, *w.input_norm, kCfg.rms_eps, *w.projection, h, g, beta,
                                          work_, s);
+
+    if (observing) {
+        capture_gdn_tensor("h", h);
+        capture_gdn_tensor("g", g);
+        capture_gdn_tensor("beta", beta);
+    }
 
     const auto projection = workspace_recipe::gdn_projection<TextConfig>(work_, T);
     Tensor z              = projection.output_gate.view({kCfg.gdn_v_dim, kCfg.gdn_v_heads, T});
@@ -1047,6 +1062,7 @@ void TextContext::gdn_mix(const GdnLayerW& w, Tensor& x, int gidx, Phase ph) {
                                                  conv_states, valid, *active_linear_state_slots_,
                                                  records.conv, query_output, key_output,
                                                  value_output, gate_output, ph, work_, s);
+            if (observing) capture_gdn_tensor("record_conv", records.conv);
         } else {
             Variant::gdn_input_projection_snapshot(
                 projection_input, *w.projection, *w.conv1d, conv_states, valid,
@@ -1068,6 +1084,14 @@ void TextContext::gdn_mix(const GdnLayerW& w, Tensor& x, int gidx, Phase ph) {
         ops::extract_bf16_columns(qkv_c, 0, qc, s);
         ops::extract_bf16_columns(qkv_c, kCfg.key_dim, kc, s);
         ops::extract_bf16_columns(qkv_c, 2 * kCfg.key_dim, vc, s);
+    }
+
+    if (observing) {
+        capture_gdn_tensor("q", qc);
+        capture_gdn_tensor("k", kc);
+        capture_gdn_tensor("v", vc);
+        capture_gdn_tensor("gate", z);
+        capture_gdn_tensor("conv_post", state_.conv_slot(0, 0));
     }
 
     Tensor q_recurrent = qc.view({kCfg.gdn_k_dim, kCfg.gdn_k_heads, T});
@@ -1104,6 +1128,11 @@ void TextContext::gdn_mix(const GdnLayerW& w, Tensor& x, int gidx, Phase ph) {
                                                kGdnScale, recurrent_states, valid,
                                                *active_linear_state_slots_, records.key,
                                                records.value, records.gate, out_batch, s);
+            if (observing) {
+                capture_gdn_tensor("record_key", records.key);
+                capture_gdn_tensor("record_value", records.value);
+                capture_gdn_tensor("record_gate", records.gate);
+            }
 
             if (streamed_replay) {
                 if (replay_host_records_ == nullptr) {
@@ -1152,11 +1181,153 @@ void TextContext::gdn_mix(const GdnLayerW& w, Tensor& x, int gidx, Phase ph) {
                              /*normalize_qk=*/true, work_, recurrent_state, o, s);
     }
 
+    if (observing) {
+        capture_gdn_tensor("out", o);
+        capture_gdn_tensor("rec_post", state_.recurrent_slot(0, 0));
+        finish_gdn_observation();
+    }
+
     Tensor on = workspace_recipe::gdn_normalized_output<TextConfig>(work_, T).view(
         {kCfg.gdn_v_dim, kCfg.gdn_v_heads, T});
     ops::gated_rmsnorm(o, *w.gdn_norm, z, kCfg.rms_eps, on, s);
 
     Variant::gdn_output_projection(on.view({kCfg.value_dim, T}), *w.out_proj, x, ph, work_, s);
+}
+
+// No device reads, synchronization or allocations occur unless explicitly armed.
+// Supported routes: eager Verify (one lane, anchor at position 62) and the
+// independent FullReset prefill reference (single P63 sequence, anchor at 62).
+bool TextContext::begin_gdn_observation(const Tensor& x, int gidx, Phase ph) {
+    auto* o = gdn_observer_;
+    if (o == nullptr || !o->armed || o->fired ||
+        gidx != 0) {
+        return false;
+    }
+    const bool prefill = ph == Phase::Prefill;
+    std::int32_t width = 0, batch = 1, slot = 0;
+    if (ph == Phase::Verify) {
+        if (active_sequence_batch_ != 1 || active_cache_positions_ == nullptr ||
+            active_linear_state_slots_ == nullptr ||
+            active_valid_columns_ == nullptr) {
+            return false;
+        }
+        width = active_sequence_width_;
+        batch = active_sequence_batch_;
+        std::int32_t position = -1, valid = 0;
+        CUDA_CHECK(cudaMemcpyAsync(&slot, active_linear_state_slots_->data, 4,
+                                   cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaMemcpyAsync(&position, active_cache_positions_->data, 4,
+                                   cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaMemcpyAsync(&valid, active_valid_columns_->data, 4,
+                                   cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaStreamSynchronize(ctx_.stream));
+        if (position != 62 || slot != 0 || valid < 1) return false;
+    } else if (prefill) {
+        // Cache positions are the existing absolute positions of this chunk.
+        if (active_cache_positions_ == nullptr || active_gqa_envelope_ == nullptr ||
+            active_sequence_batch_ != 0 || linear_state_current_slot_ != 0 ||
+            gdn_state_action_ != GdnStateAction::UpdateInPlace) {
+            return false;
+        }
+        std::int32_t first_position = -1;
+        CUDA_CHECK(cudaMemcpyAsync(&first_position, active_cache_positions_->data, 4,
+                                   cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaStreamSynchronize(ctx_.stream));
+        if (62 < first_position ||
+            62 >= first_position + static_cast<int>(x.ne[1])) {
+            return false;
+        }
+        width = x.ne[1];
+        slot = linear_state_current_slot_;
+    } else {
+        return false;
+    }
+    if (o->image() == nullptr || width <= 0) {
+        throw std::logic_error("invalid gdn observer route");
+    }
+    o->bytes = GdnMixObserver::payload_offset;
+    const std::uint32_t hdr[11] = {
+        GdnMixObserver::magic,
+        1U | (gdn_state_action_ == GdnStateAction::RecordForReplay ? 8U : 0U),
+        static_cast<std::uint32_t>(62),
+        static_cast<std::uint32_t>(0),
+        static_cast<std::uint32_t>(TextConfig::gdn_layers()), 0, 0,
+        static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(batch), 0,
+        static_cast<std::uint32_t>(state_.slot_count())};
+    std::memcpy(o->image(), hdr, sizeof(hdr));
+    if (prefill) {
+        // Serialize the actual bound absolute cache position at the anchor.
+        std::int32_t first_position = -1, position = -1;
+        CUDA_CHECK(cudaMemcpyAsync(&first_position, active_cache_positions_->data, 4,
+                                   cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaStreamSynchronize(ctx_.stream));
+        const std::int32_t offset = 62 - first_position;
+        CUDA_CHECK(cudaMemcpyAsync(&position,
+                                   static_cast<const std::int32_t*>(active_cache_positions_->data) + offset,
+                                   4, cudaMemcpyDeviceToHost, ctx_.stream));
+        CUDA_CHECK(cudaStreamSynchronize(ctx_.stream));
+        const std::int32_t values[3] = {
+            position, linear_state_current_slot_, static_cast<std::int32_t>(x.ne[1])};
+        const std::uint32_t keys[3] = {9, 9, 13};
+        static const char* keys_buf[3] = {"positions", "lane_slot", "valid_columns"};
+        for (std::int32_t j = 0; j < 3; ++j) {
+            const std::uint32_t kb = keys[j];
+            std::memcpy(o->image() + o->key_cursor, keys_buf[j], kb);
+            const std::uint32_t rec[10] = {kb, static_cast<std::uint32_t>(o->key_cursor),
+                                           4, static_cast<std::uint32_t>(o->bytes),
+                                           0, 2, 1, 1, 1, 1};
+            std::memcpy(o->image() + GdnMixObserver::header_bytes +
+                            o->count * GdnMixObserver::record_bytes,
+                        rec, sizeof(rec));
+            std::memcpy(o->image() + o->bytes, &values[j], 4);
+            o->key_cursor += kb;
+            o->bytes += 4;
+            ++o->count;
+        }
+    } else {
+        capture_gdn_tensor("positions", *active_cache_positions_);
+        capture_gdn_tensor("lane_slot", *active_linear_state_slots_);
+        capture_gdn_tensor("valid_columns", *active_valid_columns_);
+    }
+    return true;
+}
+
+void TextContext::capture_gdn_tensor(const char* key, const Tensor& t) {
+    auto& o = *gdn_observer_;
+    const std::size_t key_bytes = std::char_traits<char>::length(key);
+    const std::size_t bytes = t.bytes();
+    if (o.count >= GdnMixObserver::max_records || key_bytes == 0 ||
+        o.key_cursor > GdnMixObserver::payload_offset ||
+        key_bytes > GdnMixObserver::payload_offset - o.key_cursor ||
+        o.bytes > GdnMixObserver::capacity || bytes > GdnMixObserver::capacity - o.bytes ||
+        t.data == nullptr || !t.is_contiguous()) {
+        throw std::runtime_error("invalid or oversized gdn observer record");
+    }
+    const std::uint32_t rec[10] = {
+        static_cast<std::uint32_t>(key_bytes), static_cast<std::uint32_t>(o.key_cursor),
+        static_cast<std::uint32_t>(bytes), static_cast<std::uint32_t>(o.bytes),
+        0, static_cast<std::uint32_t>(t.dtype),
+        static_cast<std::uint32_t>(t.ne[0]), static_cast<std::uint32_t>(t.ne[1]),
+        static_cast<std::uint32_t>(t.ne[2]), static_cast<std::uint32_t>(t.ne[3])};
+    std::memcpy(o.image() + GdnMixObserver::header_bytes +
+                o.count * GdnMixObserver::record_bytes, rec, sizeof(rec));
+    std::memcpy(o.image() + o.key_cursor, key, key_bytes);
+    CUDA_CHECK(cudaMemcpyAsync(o.image() + o.bytes, t.data, bytes,
+                               cudaMemcpyDeviceToHost, ctx_.stream));
+    o.key_cursor += key_bytes;
+    o.bytes += bytes;
+    ++o.count;
+}
+
+void TextContext::finish_gdn_observation() {
+    auto& o = *gdn_observer_;
+    const std::uint32_t count = o.count;
+    const std::uint32_t payload = static_cast<std::uint32_t>(o.bytes - GdnMixObserver::payload_offset);
+    std::memcpy(o.image() + 20, &count, 4);
+    std::memcpy(o.image() + 24, &payload, 4);
+    // Same-stream drains precede every scratch/state reuse. Fixture synchronizes
+    // before reading; RecordForReplay bytes describe speculation, not committed state.
+    o.fired = true;
 }
 
 void TextContext::mlp_tail(const Tensor* post_norm, const MlpW& m, Tensor& x, Phase ph) {
