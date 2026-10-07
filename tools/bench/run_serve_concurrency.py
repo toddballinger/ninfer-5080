@@ -375,8 +375,8 @@ def validate_server_start(
         "speculative_draft_window": point.draft_tokens,
         "proposal_head": "optimized" if point.draft_tokens else "full",
     }
-    actual = {name: engine.get(name) for name in expected}
-    if actual != expected:
+    actual = {name: engine[name] for name in expected if name in engine}
+    if actual != expected or any(name not in engine for name in expected):
         raise corpus.CampaignError(f"server_start Engine configuration mismatch: {actual!r}")
     if event.get("sampling_defaults", {}).get("greedy") != (
         point.sampling_mode == "greedy"
