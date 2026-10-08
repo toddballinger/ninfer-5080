@@ -189,6 +189,9 @@ class RunningServer:
         host: str,
         port: int,
         log_path: Path,
+        *,
+        capture_paths: tuple[Path, Path] | None = None,
+        capture_drain_timeout: float = 1.0,
     ) -> None:
         self.command = list(command)
         self.host = host
@@ -196,25 +199,90 @@ class RunningServer:
         self.log_path = log_path
         self.process: subprocess.Popen[bytes] | None = None
         self.tail: ServerLogTail | None = None
+        if not math.isfinite(capture_drain_timeout) or capture_drain_timeout < 0:
+            raise ValueError("capture_drain_timeout must be finite and nonnegative")
+        self.capture_paths = capture_paths
+        self.capture_drain_timeout = capture_drain_timeout
+        self.captures: list[StreamCapture] = []
+        self.capture_status: list[dict[str, object]] = []
 
     def __enter__(self) -> "RunningServer":
         initial_offset = self.log_path.stat().st_size if self.log_path.exists() else 0
-        self.process = subprocess.Popen(self.command, cwd=REPO_ROOT)
+        if self.capture_paths is None:
+            self.process = subprocess.Popen(self.command, cwd=REPO_ROOT)
+        else:
+            from tools.bench.stream_capture import StreamCapture
+
+            self.process = subprocess.Popen(self.command, cwd=REPO_ROOT,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                for source, path, console in zip(
+                    (self.process.stdout, self.process.stderr), self.capture_paths,
+                    (sys.stdout, sys.stderr),
+                ):
+                    assert source is not None
+                    try:
+                        console_fd = console.fileno()
+                    except (AttributeError, OSError, ValueError):
+                        console_fd = None
+                    self.captures.append(StreamCapture(source, path, console_fd))
+            except BaseException as primary:
+                try:
+                    self.stop()
+                except BaseException as cleanup:
+                    primary.add_note(f"server cleanup failed: {cleanup!r}")
+                finally:
+                    self.capture_status.append({
+                        "capture_complete": False, "capture_failed": True,
+                        "capture_stop_reason": "setup_error", "archived_bytes": 0,
+                        "capture_error": repr(primary),
+                    })
+                    for source in (self.process.stdout, self.process.stderr):
+                        if source is not None and not source.closed:
+                            try:
+                                source.close()
+                            except BaseException as cleanup:
+                                primary.add_note(f"pipe cleanup failed: {cleanup!r}")
+                raise
         self.tail = ServerLogTail(self.log_path, self.process, initial_offset)
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        self.stop()
+        try:
+            self.stop()
+        except BaseException as cleanup:
+            if exc is None:
+                raise
+            exc.add_note(f"server cleanup failed: {cleanup!r}")
 
     def stop(self) -> None:
-        if self.process is None or self.process.poll() is not None:
-            return
-        self.process.terminate()
+        primary: BaseException | None = None
         try:
-            self.process.wait(timeout=15.0)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
+            if self.process is not None and self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=15.0)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+        except BaseException as error:
+            primary = error
+        finally:
+            self.capture_status = []
+            for capture in self.captures:
+                try:
+                    status = capture.finish(self.capture_drain_timeout)
+                    if status["capture_failed"]:
+                        raise CampaignError(f"stream archival failed: {status['capture_error']}")
+                except BaseException as cleanup:
+                    if primary is None:
+                        primary = cleanup
+                    else:
+                        primary.add_note(f"capture cleanup failed: {cleanup!r}")
+                finally:
+                    self.capture_status.append(capture.status())
+        if primary is not None:
+            raise primary
 
     def wait_until_ready(self) -> dict[str, Any]:
         if self.process is None or self.tail is None:
