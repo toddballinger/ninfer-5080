@@ -347,6 +347,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output", type=Path, required=True, help="benchmark output directory"
     )
+    parser.add_argument(
+        "--forensics-dir",
+        type=Path,
+        help="optional stdout/stderr archival directory: when given, each benchmark point's "
+        "server process has its streams teed to deterministic per-point archive files under "
+        "this directory and the complete capture status is recorded in that point's report "
+        "(no-flag behavior is unchanged)",
+    )
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
     parser.add_argument(
@@ -386,6 +394,11 @@ def validate_args(args: argparse.Namespace) -> None:
             raise corpus.CampaignError("--concurrency must be in [1, 8]")
     if len(args.suite) != len(set(args.suite)):
         raise corpus.CampaignError("duplicate --suite value")
+    if getattr(args, "forensics_dir", None) is not None:
+        forensics_dir = args.forensics_dir.expanduser().resolve()
+        if forensics_dir.exists() and not forensics_dir.is_dir():
+            raise corpus.CampaignError("--forensics-dir must be a directory")
+        args.forensics_dir = forensics_dir
 
 
 def build_points(
@@ -930,6 +943,7 @@ def analyze_point(
     results: Sequence[ClientResult],
     campaign_start: float,
     campaign_end: float,
+    forensics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     corpus.validate_startup_metrics(server_start)
     errors = [event for event in events if event.get("event") == "request_error"]
@@ -985,7 +999,7 @@ def analyze_point(
             "decode_tokens_per_second": int(done_totals["decode_tokens"]) / makespan,
         }
 
-    return {
+    report = {
         "artifact_type": POINT_ARTIFACT_TYPE,
         "schema_version": SCHEMA_VERSION,
         "target": point.target,
@@ -1014,6 +1028,19 @@ def analyze_point(
         "metrics": metrics,
         "requests": client_records(results, campaign_start),
     }
+    # Forensic evidence (only when --forensics-dir was requested): the complete per-point
+    # capture status, the archival directory, and the deterministic per-point archive paths.
+    if forensics is not None:
+        if forensics.get("capture") is not None:
+            report["capture"] = forensics["capture"]
+        if forensics.get("forensics_dir") is not None:
+            report["forensics_dir"] = str(forensics["forensics_dir"])
+        if forensics.get("capture_paths") is not None:
+            report["capture_paths"] = {
+                "stdout": str(forensics["capture_paths"][0]),
+                "stderr": str(forensics["capture_paths"][1]),
+            }
+    return report
 
 
 def run_point(
@@ -1032,12 +1059,39 @@ def run_point(
         flush=True,
     )
 
-    with corpus.RunningServer(command, "127.0.0.1", args.port, server_log) as server:
+    # Optional forensic archival: each actual point gets its own stdout/stderr capture
+    # archives under --forensics-dir; the no-flag path remains a plain RunningServer.
+    if getattr(args, "forensics_dir", None) is not None:
+        forensics_dir = args.forensics_dir
+        forensics_dir.mkdir(parents=True, exist_ok=True)
+        capture_paths = (
+            forensics_dir / f"{point.key}.stdout.log",
+            forensics_dir / f"{point.key}.stderr.log",
+        )
+    else:
+        forensics_dir = None
+        capture_paths = None
+
+    with corpus.RunningServer(
+        command,
+        "127.0.0.1",
+        args.port,
+        server_log,
+        capture_paths=capture_paths,
+    ) as server:
         server_start = server.wait_until_ready()
         server_instance_id, weights_id = validate_server_start(server_start, point, args)
         results, campaign_start, campaign_end = run_clients(point, jobs, args.port)
 
     events = load_server_events(server_log, server_instance_id)
+    if capture_paths is not None:
+        forensics = {
+            "capture": list(server.capture_status),
+            "forensics_dir": forensics_dir,
+            "capture_paths": capture_paths,
+        }
+    else:
+        forensics = None
     report = analyze_point(
         point,
         command,
@@ -1048,6 +1102,7 @@ def run_point(
         results,
         campaign_start,
         campaign_end,
+        forensics,
     )
     point_path = output_dir / "points" / f"{point.key}.json"
     point_path.write_text(
