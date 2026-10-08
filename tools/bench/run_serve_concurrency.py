@@ -31,6 +31,13 @@ SUITES = ("decode-saturation", "corpus-makespan")
 STATS_INTERVAL_MS = 1000
 PENDING_TIMEOUT_MS = 24 * 60 * 60 * 1000
 SATURATION_FIXTURE = "long_decode_aime26_15"
+# Separate opt-in workload; the fixed long-reasoning corpus stays unchanged.
+CONTINUOUS_SATURATION_PROMPT = (
+    "Produce a very long uninterrupted sequence of numbered lines starting at 1. "
+    "Each line must contain only its number followed by the word continue. "
+    "Do not summarize, conclude, add closing remarks, or stop voluntarily. "
+    "Continue sequentially until the API output-token budget interrupts you."
+)
 SATURATION_SEEDS = (
     7632647173703958409,
     7968175640111700217,
@@ -302,6 +309,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=8192,
         help="per-request output budget for decode-saturation (default: 8192)",
     )
+    parser.add_argument(
+        "--saturation-prompt", choices=("aime", "continuous"), default="aime",
+        help="opt-in continuous output fixture; matched C1 and C2 runs required",
+    )
     parser.add_argument("--max-context", type=int, default=131072)
     parser.add_argument(
         "--kv-capacity",
@@ -433,10 +444,19 @@ def build_points(
 
 
 def build_jobs(
-    point: Point, fixtures: dict[str, corpus.Fixture], decode_tokens: int
+    point: Point, fixtures: dict[str, corpus.Fixture], decode_tokens: int,
+    saturation_prompt: str = "aime",
 ) -> list[Job]:
     if point.suite == "decode-saturation":
         fixture = fixtures[SATURATION_FIXTURE]
+        if saturation_prompt == "continuous":
+            fixture = dataclasses.replace(
+                fixture,
+                name="decode_saturation_continuous_v1",
+                messages=[{"role": "user", "content": CONTINUOUS_SATURATION_PROMPT}],
+            )
+        elif saturation_prompt != "aime":
+            raise corpus.CampaignError(f"invalid saturation prompt: {saturation_prompt}")
         return [
             Job(
                 index=index,
@@ -1050,7 +1070,7 @@ def run_point(
     output_dir: Path,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    jobs = build_jobs(point, fixtures, args.decode_tokens)
+    jobs = build_jobs(point, fixtures, args.decode_tokens, args.saturation_prompt)
     server_log = output_dir / "server" / f"{point.key}.jsonl"
     command = server_command(serve, point, server_log, args)
     print(
@@ -1407,7 +1427,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         for point in points:
             log_path = output_dir / "server" / f"{point.key}.jsonl"
-            jobs = build_jobs(point, fixtures, args.decode_tokens)
+            jobs = build_jobs(point, fixtures, args.decode_tokens, args.saturation_prompt)
             print(
                 f"# {point.key}: {len(jobs)} request(s), "
                 f"order={workload_order_label(point)}"
