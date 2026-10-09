@@ -1929,7 +1929,7 @@ private:
                         "head_pages_main=%llu head_pages_backend=%llu "
                         "used_pages_main=%llu used_pages_backend=%llu used_lanes=%llu "
                         "capacity_pages_main=%llu capacity_pages_backend=%llu capacity_lanes=%llu "
-                        "deadline_remaining_ms=%lld protection_epoch=%llu protection_phase=%s\\n",
+                        "deadline_remaining_ms=%lld protection_epoch=%llu protection_phase=%s\n",
                         static_cast<unsigned long long>(head->id), queued.size(), active.size,
                         static_cast<unsigned long long>(head_base.admission.main_kv_pages),
                         static_cast<unsigned long long>(head_base.admission.backend_kv_pages),
