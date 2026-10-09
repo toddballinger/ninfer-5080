@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -25,6 +26,36 @@ public:
     KvHostBackup& operator=(KvHostBackup&&) noexcept=default;
     [[nodiscard]] const std::vector<KvPlaneImage>& planes() const noexcept {return planes_;}
     [[nodiscard]] std::size_t byte_count() const noexcept {return bytes_;}
+
+    // Page identity is the ordinal in PagedKVAllocation::page_ids().
+    // Restoration may select different physical page IDs.
+    [[nodiscard]] std::optional<std::span<const std::uint8_t>>
+    page_image(std::size_t plane, std::size_t logical_index) const noexcept {
+        if (plane>=planes_.size())return std::nullopt;
+        const auto& item=planes_[plane];
+        if(logical_index>=item.image_offsets.size())return std::nullopt;
+        const auto begin=item.image_offsets[logical_index];
+        const auto end=logical_index+1<item.image_offsets.size()
+            ?item.image_offsets[logical_index+1]:item.data.size();
+        if(begin>end || end>item.data.size())return std::nullopt;
+        return std::span<const std::uint8_t>(item.data.data()+begin,end-begin);
+    }
+    [[nodiscard]] bool valid_restore_ids(
+        std::span<const std::int32_t> dest_ids) const noexcept {
+        if(planes_.empty())return false;
+        for(const auto& item:planes_){
+            if(item.physical_page_ids.size()!=dest_ids.size())return false;
+            for(std::size_t i=0;i<dest_ids.size();++i){
+                if(dest_ids[i]<0 ||
+                   static_cast<std::size_t>(dest_ids[i])>=item.geometry.page_count)
+                    return false;
+                for(std::size_t j=0;j<i;++j)
+                    if(dest_ids[i]==dest_ids[j])return false;
+            }
+        }
+        return true;
+    }
+
     // No production allocator handles: only physical page IDs and independent bytes.
     // Caller guarantees page IDs correspond to the same logical-order mapping
     // when later reserving new physical pages for restoration.
