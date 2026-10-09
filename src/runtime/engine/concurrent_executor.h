@@ -1953,6 +1953,12 @@ private:
                         control_progress = true;
                     }
                 }
+                // Deliberate policy hold: physical admission is possible, so
+                // the frozen-incumbent protection invariant does not apply.
+                // Recheck on each completed GPU unit; do not enter Drain.
+                protection_.reset();
+                return control_progress ? AdmissionProgress::ControlProgress
+                                        : AdmissionProgress::None;
             }
 
             const ActiveAdmissionSet active = active_admission_set();
