@@ -1,3 +1,6 @@
+
+> **Issue #58 cross-chat continuation:** [handover, validated milestones and next engineering steps](docs/ISSUE58_CONTINUATION_HANDOVER.md). Production C1 remains in place; C2 reversible yielding is not yet implemented.
+
 # NInfer RTX 5080 — Qwen3.8-27B at true 128K + Vision on 16 GB
 
 This fork documents and maintains a validated **Qwen3.8-27B** configuration for a single **NVIDIA RTX 5080 16 GB** with a genuine **131,072-token context and KV capacity**, Q4 KV, MTP-3 speculative decoding, and Vision support.
