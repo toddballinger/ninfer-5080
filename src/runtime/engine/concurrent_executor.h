@@ -1728,9 +1728,22 @@ private:
         return plan.effective_output_tokens > threshold;
     }
 
+    [[nodiscard]] static bool trusted_short_hint(const Request& request) noexcept {
+        const char* flag = std::getenv("NINFER_TRUST_SHORT_OPERATION_HINT");
+        return flag && flag[0] == '1' && flag[1] == '\0' &&
+               request.options.execution.ninfer_short_operation;
+    }
+
+    [[nodiscard]] static bool classified_long(const Request& request,
+                                              const RequestPlanSummary& summary) noexcept {
+        // Explicit trusted hint affects scheduler classification only. It does
+        // not change actual token limits, reservation, model or KV accounting.
+        return !trusted_short_hint(request) && is_long_generation(summary);
+    }
+
     [[nodiscard]] bool long_lane_guard(const std::shared_ptr<Request>& candidate) const {
         if (!reserve_short_lane_enabled() || !candidate->base_plan ||
-            !is_long_generation(candidate->base_plan->summary())) { return false; }
+            !classified_long(*candidate, candidate->base_plan->summary())) { return false; }
         for (const auto& active : slots_) {
             if (active && active->issue58_long_at_admission) { return true; }
         }
@@ -1844,7 +1857,16 @@ private:
             request->generated.reserve(summary.effective_output_tokens);
             request->lane                   = lane;
             request->admission_resources    = summary.admission;
-            request->issue58_long_at_admission = is_long_generation(summary);
+            request->issue58_long_at_admission = classified_long(*request, summary);
+            if (const char* trace = std::getenv("NINFER_ADMISSION_CLASS_TRACE");
+                trace && trace[0] == '1' && trace[1] == '\0') {
+                // Classification observability only. No prompt, output, or identity logged.
+                std::fprintf(stderr,
+                    "[ADMISSION-CLASS] id=%llu effective_max_output=%u long=%u lane=%u\n",
+                    static_cast<unsigned long long>(request->id),
+                    static_cast<unsigned>(summary.effective_output_tokens),
+                    static_cast<unsigned>(request->issue58_long_at_admission), lane);
+            }
             request->remaining_service_work = summary.service_work_quanta;
             request->backfill_epoch         = backfill_epoch;
             request->backfill_class         = backfill_class;
@@ -1951,7 +1973,7 @@ private:
                         Clock::now() >= candidate->deadline) { continue; }
                     try {
                         ensure_base_plan(candidate);
-                        if (!is_long_generation(candidate->base_plan->summary())) {
+                        if (!classified_long(*candidate, candidate->base_plan->summary())) {
                             if (auto lane = find_admission_lane(candidate)) {
                                 return admit_planned_request(candidate, *lane,
                                                              BackfillClass::None, 0);

@@ -570,6 +570,9 @@ GenerationRequest parse_chat_completion_request(const Json& body, const RequestL
     parse_openai_reasoning_effort(body, out);
     parse_openai_reasoning_budget(body, out);
     out.preserve_thinking = parse_openai_preserve_thinking(body);
+    if (body.contains("ninfer_short_operation")) {
+        out.ninfer_short_operation = get_bool(body, "ninfer_short_operation", false);
+    }
 
     std::optional<int> max_tokens = get_int(body, "max_completion_tokens");
     if (!max_tokens) { max_tokens = get_int(body, "max_tokens"); }
