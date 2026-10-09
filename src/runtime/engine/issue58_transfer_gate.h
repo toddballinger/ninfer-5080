@@ -30,8 +30,9 @@ public:
     SuspensionTransaction() = default;
     SuspensionTransaction(const SuspensionTransaction&) = delete;
     SuspensionTransaction& operator=(const SuspensionTransaction&) = delete;
-    SuspensionTransaction(SuspensionTransaction&&) noexcept = default;
-    SuspensionTransaction& operator=(SuspensionTransaction&&) noexcept = default;
+    // Prevent a second transaction object from inheriting a live stage.
+    SuspensionTransaction(SuspensionTransaction&&) = delete;
+    SuspensionTransaction& operator=(SuspensionTransaction&&) = delete;
     [[nodiscard]] TransferStage stage() const noexcept { return stage_; }
     [[nodiscard]] TransferFailure failure() const noexcept { return failure_; }
     [[nodiscard]] bool quiesce(const TransferProof& p) noexcept {
