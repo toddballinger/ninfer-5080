@@ -20,6 +20,11 @@ RC=0
      fi
      git -C "$SOURCE" worktree add --detach "$WORKTREE" origin/issue58-source-admission-triage || exit 12
   fi
+  if [[ -n "$(git -C "$WORKTREE" status --porcelain)" ]]; then
+    echo "WORKTREE_DIRTY_REFUSING_TO_OVERWRITE"
+    exit 18
+  fi
+  git -C "$WORKTREE" switch --detach origin/issue58-source-admission-triage || exit 19
   echo "WORKTREE=$(git -C "$WORKTREE" rev-parse --show-toplevel)"
   echo "HEAD=$(git -C "$WORKTREE" rev-parse HEAD)"
   echo "=== DIFF VALIDATION ==="
