@@ -231,6 +231,8 @@ public:
                                std::span<const std::uint8_t> terminal,
                                std::span<const std::uint8_t> cancelled);
     void abort_lane(std::uint32_t lane) noexcept;
+    // Read-only safety fence; does not suspend, migrate, or release resources.
+    [[nodiscard]] bool at_resolved_yield_boundary(std::uint32_t lane) const noexcept;
     [[nodiscard]] bool has_retained_lane(std::uint32_t lane) const noexcept;
     void evict_retained_lane(std::uint32_t lane) noexcept;
     [[nodiscard]] GenerationTimings generation_timings_lane(std::uint32_t lane) const noexcept;
