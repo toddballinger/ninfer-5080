@@ -1,5 +1,11 @@
 # Benchmarks
 
+## Serving concurrency gate — October 9, 2026
+
+C2 achieved 1.511x completed-corpus productivity versus C1 (75/75; 3112.180s vs 4700.981s), **but failed the interactive readiness criterion**: C2 TTFT maximum 664.72 seconds (two responses over 600s). C3 stopped at 66/75 with a 900-second queue-admission timeout and a TTFT P95 of 647.54 seconds on completed requests. C4 failed runtime reservation by 3.62MiB at startup. The canonical single-request v1.5 ninfer_bench result is unchanged. See [full 128K concurrency closeout](CONCURRENCY_128K.md) and [P0 admission blocker #58](https://github.com/toddballinger/ninfer-5080/issues/58). **Keep production at C1.**
+
+
+
 ## Canonical v1.5 RTX 5080 benchmark — `ninfer_bench`
 
 From v1.5 onward, **`ninfer_bench` is the single canonical whole-model performance benchmark**. Op microbenchmarks, Nsight captures, short-context sweeps and serving probes are diagnostic tools only unless a specific investigation requires them.
