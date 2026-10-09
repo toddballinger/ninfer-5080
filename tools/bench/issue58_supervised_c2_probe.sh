@@ -108,7 +108,7 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 echo "=== START C2 TRACED TEST ON PORT $PORT ==="
-NINFER_ADMISSION_TRACE=1 "$BIN" "$MODEL" \
+NINFER_ADMISSION_TRACE=1 NINFER_SHORT_LANE_RESERVE=1 "$BIN" "$MODEL" \
   --host 127.0.0.1 --port "$PORT" --model-id local-model \
   --max-context 131072 --kv-capacity 131072 --prefill-chunk 1792 \
   --kv-dtype q4 --spec mtp --draft-tokens 3 \
@@ -138,7 +138,7 @@ url=f"http://127.0.0.1:{port}/v1/chat/completions"
 def run(name, tokens, delay):
     time.sleep(delay)
     t=time.monotonic()
-    body=json.dumps({"model":"local-model","messages":[{"role":"user","content":"Write one short paragraph explaining what a semaphore does in a concurrent program."}],"max_tokens":tokens,"stream":True,"temperature":0.1}).encode()
+    body=json.dumps({"model":"local-model","messages":[{"role":"user","content":"Write at least 4000 numbered detailed paragraphs on concurrent scheduling, semaphores and queueing; continue sequentially without a conclusion."}],"max_tokens":tokens,"stream":True,"temperature":0.1}).encode()
     req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer local-model"})
     try:
         with urllib.request.urlopen(req,timeout=100) as resp:
@@ -163,7 +163,7 @@ def run(name, tokens, delay):
     except Exception as exc:
         print(json.dumps({"request":name,"max_tokens":tokens,"elapsed_seconds":round(time.monotonic()-t,3),"error":str(exc)}),flush=True)
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-    jobs=[ex.submit(run,"long_65536",65536,0),ex.submit(run,"short_128",128,3),ex.submit(run,"short_256",256,6)]
+    jobs=[ex.submit(run,"long_65536",65536,0),ex.submit(run,"long_32768",32768,0.1),ex.submit(run,"short_256",256,2)]
     for fut in jobs: fut.result()
 PY
 echo "=== C2 DIAGNOSTIC COMPLETE ==="
