@@ -16,6 +16,14 @@ int main(){
     assert(backup.planes()[1].data.size()==2048);
     KvHostBackup moved=std::move(backup);
     assert(moved.byte_count()==4096);
+    const auto image=moved.page_image(0,1);
+    assert(image && image->size()==1024);
+    assert(!moved.page_image(0,2));
+    assert(!moved.page_image(10,0));
+    assert(moved.valid_restore_ids(std::vector<std::int32_t>{0,3}));
+    assert(!moved.valid_restore_ids(std::vector<std::int32_t>{0,0}));
+    assert(!moved.valid_restore_ids(std::vector<std::int32_t>{0,4}));
+    assert(!moved.valid_restore_ids(std::vector<std::int32_t>{0}));
     bool rejected=false;
     try{moved.append_plane({KvPageOrder::PageMajor,4,4096,1024,0,0},{1,1});}
     catch(const std::invalid_argument&){rejected=true;}
