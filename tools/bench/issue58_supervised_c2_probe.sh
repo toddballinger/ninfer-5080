@@ -128,10 +128,10 @@ for _ in $(seq 1 45); do
 done
 [[ "$ready" -eq 1 ]] || { echo "TEST_STARTUP_FAILED"; tail -50 "$SERVERLOG"; exit 30; }
 echo "TEST_READY=PASS"
-echo "=== CONTROLLED ADMISSION REPRO (MAX 135s) ==="
+echo "=== CONTROLLED ADMISSION REPRO (MAX 65s) ==="
 # max_tokens=65536 deliberately probes full-future-KV reservation while allowing
 # the server to continue running; clients are cancelled after bounded intervals.
-timeout --signal=TERM --kill-after=5s 140s python3 - "$PORT" <<'PY'
+timeout --signal=TERM --kill-after=5s 65s python3 - "$PORT" <<'PY'
 import concurrent.futures, json, sys, time, urllib.request, urllib.error
 port=int(sys.argv[1])
 url=f"http://127.0.0.1:{port}/v1/chat/completions"
