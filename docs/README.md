@@ -1,3 +1,6 @@
+
+> **Continuation / current status (2026-10-09):** [Issue #58 cross-chat handover](ISSUE58_CONTINUATION_HANDOVER.md). Read before resuming work; the new safe-boundary predicate is read-only and production C1 remains unchanged.
+
 # NInfer documentation
 
 Start with the [project README](../README.md) for the validated RTX 5080 profile, official artifact, serving settings and release status.
