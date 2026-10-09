@@ -1154,6 +1154,20 @@ void ProgramImplCore::abort_lane(std::uint32_t lane) noexcept {
     clear_lane(sequences[lane], requests[lane]);
 }
 
+bool ProgramImplCore::at_resolved_yield_boundary(std::uint32_t lane) const noexcept {
+    if (lane >= max_concurrency) { return false; }
+    const RequestControl& request = requests[lane];
+    const SequenceState& sequence = sequences[lane];
+    return request.lifecycle == Lifecycle::Active &&
+           request.pending.kind == PendingKind::None && !request.prefill.has_value() &&
+           sequence.kv.has_value() && !sequence.retained &&
+           sequence.ledger_frontier == sequence.ledger.size() &&
+           sequence.execution_frontier + 1 == sequence.ledger_frontier &&
+           sequence.text_kv_valid >= sequence.execution_frontier &&
+           (speculative_backend != SpeculativeBackend::Mtp ||
+            sequence.mtp_kv_valid >= sequence.execution_frontier);
+}
+
 bool ProgramImplCore::has_retained_lane(std::uint32_t lane) const noexcept {
     return lane < max_concurrency && sequences[lane].retained;
 }
