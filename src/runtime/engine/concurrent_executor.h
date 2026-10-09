@@ -532,6 +532,7 @@ private:
         std::array<std::optional<Plan>, kMaximumConcurrency> lane_plans{};
         std::array<std::uint64_t, kMaximumConcurrency> lane_plan_versions{};
         AdmissionResources admission_resources;
+        bool issue58_long_at_admission = false;
         std::uint64_t remaining_service_work = 0;
         std::uint64_t backfill_epoch         = 0;
         BackfillClass backfill_class         = BackfillClass::None;
@@ -1722,8 +1723,7 @@ private:
         if (!reserve_short_lane_enabled() || !candidate->base_plan ||
             !is_long_generation(candidate->base_plan->summary())) { return false; }
         for (const auto& active : slots_) {
-            if (active && active->base_plan &&
-                is_long_generation(active->base_plan->summary())) { return true; }
+            if (active && active->issue58_long_at_admission) { return true; }
         }
         return false;
     }
@@ -1835,6 +1835,7 @@ private:
             request->generated.reserve(summary.effective_output_tokens);
             request->lane                   = lane;
             request->admission_resources    = summary.admission;
+            request->issue58_long_at_admission = is_long_generation(summary);
             request->remaining_service_work = summary.service_work_quanta;
             request->backfill_epoch         = backfill_epoch;
             request->backfill_class         = backfill_class;
