@@ -52,8 +52,13 @@ public:
         : charge_(charge) {}
     SuspendedOwnershipToken(const SuspendedOwnershipToken&) = delete;
     SuspendedOwnershipToken& operator=(const SuspendedOwnershipToken&) = delete;
-    SuspendedOwnershipToken(SuspendedOwnershipToken&&) noexcept = default;
-    SuspendedOwnershipToken& operator=(SuspendedOwnershipToken&&) noexcept = default;
+    SuspendedOwnershipToken(SuspendedOwnershipToken&& other) noexcept
+        : charge_(std::exchange(other.charge_, SuspendedOwnershipCharge{})) {}
+    SuspendedOwnershipToken& operator=(SuspendedOwnershipToken&& other) noexcept {
+        if (this != &other)
+            charge_ = std::exchange(other.charge_, SuspendedOwnershipCharge{});
+        return *this;
+    }
     [[nodiscard]] const SuspendedOwnershipCharge& charge() const noexcept {
         return charge_;
     }
