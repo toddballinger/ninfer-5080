@@ -14,6 +14,8 @@ int main() {
        .text_kv_bytes=100,.backend_kv_bytes=200,.recurrent_bytes=300,
        .hidden_bytes=400,.host_offload_bytes=500});
     auto moved=std::move(original);
+    assert(original.charge().request_id==0);
+    assert(!checked_charge_totals(original.charge()).has_value());
     assert(moved.charge().request_id==42);
     assert(moved.charge().original_lane==1);
     assert(moved.charge().text_kv_bytes==100);
@@ -25,10 +27,17 @@ int main() {
     assert(totals.has_value());
     assert(totals->resident_device_bytes == 1000);
     assert(totals->host_offload_bytes == 500);
-    auto bad = moved.charge();
+    SuspendedOwnershipToken replacement({.request_id=99,.text_kv_bytes=1});
+    replacement = std::move(moved);
+    assert(moved.charge().request_id == 0);
+    assert(replacement.charge().request_id == 42);
+    assert(checked_charge_totals(replacement.charge())->resident_device_bytes == 1000);
+    replacement = std::move(replacement);
+    assert(replacement.charge().request_id == 42);
+    auto bad = replacement.charge();
     bad.text_kv_bytes = std::numeric_limits<std::size_t>::max();
     assert(!checked_charge_totals(bad).has_value());
-    bad = moved.charge();
+    bad = replacement.charge();
     bad.request_id = 0;
     assert(!checked_charge_totals(bad).has_value());
 }
