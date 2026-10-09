@@ -180,6 +180,7 @@ struct StopPolicy {
 struct ExecutionOptions {
     SamplingOverrides sampling;
     std::uint32_t requested_output_tokens = 0;
+    bool ninfer_short_operation = false;
     bool allow_prefix_reuse               = true;
 };
 
