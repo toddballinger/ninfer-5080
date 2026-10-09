@@ -1716,7 +1716,16 @@ private:
     }
 
     [[nodiscard]] static bool is_long_generation(const RequestPlanSummary& plan) noexcept {
-        return plan.effective_output_tokens > 8192;
+        // A smaller threshold may be selected for bounded fairness tests.
+        std::uint32_t threshold = 8192;
+        if (const char* value = std::getenv("NINFER_LONG_OUTPUT_THRESHOLD")) {
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(value, &end, 10);
+            if (end != value && *end == '\0' && parsed >= 256 && parsed <= 65536) {
+                threshold = static_cast<std::uint32_t>(parsed);
+            }
+        }
+        return plan.effective_output_tokens > threshold;
     }
 
     [[nodiscard]] bool long_lane_guard(const std::shared_ptr<Request>& candidate) const {
