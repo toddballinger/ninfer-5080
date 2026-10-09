@@ -69,6 +69,10 @@ Historical release records: [v1.4](docs/RELEASE_QWEN3.8_27B_RTX5080_V1.4.md), [v
 
 ## Recommended serving profile
 
+> **2026-10-09 concurrency decision:** C2 was 1.511x faster on the 75-job corpus, but suffered two >600-second TTFTs (maximum 664.72s); it is **not production-qualified** for OpenClaw. C3 queue timeout and C4 startup memory failure are documented in [128K concurrency closeout](docs/CONCURRENCY_128K.md). Retain max-concurrency 1 until [P0 scheduler issue #58](https://github.com/toddballinger/ninfer-5080/issues/58) passes bounded-latency qualification. PR #59 adds diagnostics, not the fix.
+
+
+
 The v1.5 RTX 5080 production profile uses full 128K context/KV, Vision 2048, host-mapped embeddings, MTP-3 and CUDA Graph decode:
 
 ```bash
