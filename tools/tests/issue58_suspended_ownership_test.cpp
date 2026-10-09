@@ -32,7 +32,8 @@ int main() {
     assert(moved.charge().request_id == 0);
     assert(replacement.charge().request_id == 42);
     assert(checked_charge_totals(replacement.charge())->resident_device_bytes == 1000);
-    replacement = std::move(replacement);
+    auto* same_token = &replacement;
+    replacement = std::move(*same_token);  // exercise runtime self-move guard
     assert(replacement.charge().request_id == 42);
     auto bad = replacement.charge();
     bad.text_kv_bytes = std::numeric_limits<std::size_t>::max();
