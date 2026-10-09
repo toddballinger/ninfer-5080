@@ -1706,6 +1706,28 @@ private:
         request->lane_plan_versions[lane] = lane_plan_versions_[lane];
     }
 
+    // Issue #58: optional non-preemptive latency isolation. Do not let two large
+    // generations occupy both C2 slots; preserve one slot for shorter work.
+    // This avoids KV/MTP checkpointing and never aborts an admitted generation.
+    [[nodiscard]] bool reserve_short_lane_enabled() const noexcept {
+        const char* value = std::getenv("NINFER_SHORT_LANE_RESERVE");
+        return max_concurrency_ == 2 && value && value[0] == '1' && value[1] == '\0';
+    }
+
+    [[nodiscard]] static bool is_long_generation(const RequestPlanSummary& plan) noexcept {
+        return plan.effective_output_tokens > 8192;
+    }
+
+    [[nodiscard]] bool long_lane_guard(const std::shared_ptr<Request>& candidate) const {
+        if (!reserve_short_lane_enabled() || !candidate->base_plan ||
+            !is_long_generation(candidate->base_plan->summary())) { return false; }
+        for (const auto& active : slots_) {
+            if (active && active->base_plan &&
+                is_long_generation(active->base_plan->summary())) { return true; }
+        }
+        return false;
+    }
+
     [[nodiscard]] std::optional<LaneChoice>
     find_admission_lane(const std::shared_ptr<Request>& request) {
         std::optional<LaneChoice> selected;
@@ -1904,6 +1926,29 @@ private:
             }
             if (head_lane) {
                 return admit_planned_request(head, *head_lane, BackfillClass::None, 0);
+            }
+
+            // Policy-blocked long FIFO head: admit one waiting short request on the
+            // vacant lane instead of letting the protection/drain logic strand it.
+            // Physical lane and KV admission checks still run in find_admission_lane.
+            if (long_lane_guard(head)) {
+                for (std::size_t i = 1; i < queued.size(); ++i) {
+                    const auto& candidate = queued[i];
+                    if (candidate->cancelled.load(std::memory_order_acquire) ||
+                        Clock::now() >= candidate->deadline) { continue; }
+                    try {
+                        ensure_base_plan(candidate);
+                        if (!is_long_generation(candidate->base_plan->summary())) {
+                            if (auto lane = find_admission_lane(candidate)) {
+                                return admit_planned_request(candidate, *lane,
+                                                             BackfillClass::None, 0);
+                            }
+                        }
+                    } catch (...) {
+                        (void)remove_pending_error(candidate, std::current_exception());
+                        control_progress = true;
+                    }
+                }
             }
 
             const ActiveAdmissionSet active = active_admission_set();
