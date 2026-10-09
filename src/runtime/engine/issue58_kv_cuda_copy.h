@@ -2,6 +2,10 @@
 // Issue58 experimental CUDA page-image transport. No allocator mutations.
 // Caller must own the device/host buffers, maintain page ownership, and
 // synchronize the stream BEFORE examining/releasing or reusing either buffer.
+// For genuine asynchronous transfers host_image MUST refer to pinned/page-locked
+// host storage; ordinary std::vector storage is NOT a validated async target.
+// A future owning snapshot path must stage/copy into independent durable storage
+// after CUDA completion, and keep the pinned staging allocation alive until then.
 #include "runtime/engine/issue58_kv_page_geometry.h"
 #include <cuda_runtime_api.h>
 #include <cstddef>
