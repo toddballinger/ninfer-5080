@@ -45,3 +45,10 @@ The target-private read-only fence now rejects lane/sequence identity mismatch, 
 **Still not sufficient for suspension:** even a true fence result does not establish that device kernels are quiescent, that CUDA graph scratch is safe, that linear-attention state is movable, that KV page table and allocator charges are independently transferrable, or that scheduler-owned streaming/cancellation can be atomically rebound. Callers must not interpret it as permission to evict a lane.
 
 **Next validation:** incremental compile of the single changed runtime header using existing PR #63 build directory and ccache; no GPU inference, no service stop. Runtime tests must later cover pending, prefill, empty, frontier mismatch, prefix mismatch, absent MTP backend allocation, lane mismatch and DFlash rejection. Do not claim these tests have run. Follow with a separately approved, isolated checkpoint/restore correctness gate before attempting live preemption.
+
+
+## 2026-10-09 host-testable fence extraction
+
+PR #63 commits `d50ae01`, `b383efa`, `1e5c929` introduced `src/runtime/engine/issue58_yield_boundary_facts.h` and `tools/tests/issue58_yield_boundary_test.cpp`. The existing Qwen runtime predicate now converts real target state to plain scalar facts and delegates its decisions to the *same* constexpr function exercised by the standalone host test. The test covers active/empty, pending, prefill, retained, missing KV, bounds and lane mismatch, prefix and ledger mismatch, execution wraparound, text/MTP KV mismatch, missing backend allocation, unsupported DFlash, and valid ordinary/MTP cases. It uses `static_assert` plus runtime `assert`.
+
+**Unverified at commit time:** host C++ test and changed target compile. No suspension ownership token, GPU page export, recurrent-state relocation, resumption or scheduler preemption is implemented. Keep the PR draft and production C1 unchanged. The next Brain check must first compile/run this small host-only test (no CUDA), then invoke the existing incremental `ninfer-serve` build only once to verify target integration.
