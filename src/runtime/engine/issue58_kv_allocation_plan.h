@@ -32,7 +32,7 @@ plan_kv_allocation_capture(const PagedKVPool& pool,
         if(tensor.nb[2]<=0 || tensor.nb[3]<=0 || tensor.ne[3]<=0)
             throw std::invalid_argument("KV tensor has invalid physical strides");
         const KvPlaneGeometry geom{
-            order, pool.page_group_count(), static_cast<std::size_t>(tensor.nbytes()),
+            order, pool.page_group_count(), static_cast<std::size_t>(tensor.bytes()),
             order==KvPageOrder::PageMajor
                 ?static_cast<std::size_t>(tensor.nb[3])
                 :static_cast<std::size_t>(tensor.nb[2]),
