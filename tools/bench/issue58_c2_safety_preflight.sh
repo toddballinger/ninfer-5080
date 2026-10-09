@@ -8,7 +8,7 @@ rc=0
   echo "USER=$(id -un) UID=$(id -u)"
   if [[ "$(id -un)" != "toddballinger" ]]; then echo "FAIL: must run as toddballinger"; rc=20; fi
   WRAPPER=/usr/local/sbin/openclaw-ninfer-user-service
-  BIN=/home/openclaw/ninfer-issue58-trace-build/apps/ninfer-serve
+  BIN=/home/toddballinger/issue58-test/ninfer-serve
   MODEL=/models/ninfer-custom/qwen3_8_27b_5080_128k_24vz_7gv_473dade.ninfer
   for x in "$WRAPPER" "$BIN" "$MODEL"; do
      if [[ -e "$x" ]]; then ls -l "$x"; else echo "FAIL: missing $x"; rc=21; fi
