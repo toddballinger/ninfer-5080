@@ -1,5 +1,5 @@
 
-> **Continuation / current status (2026-10-09):** [Issue #58 cross-chat handover](ISSUE58_CONTINUATION_HANDOVER.md). Read before resuming work; the new safe-boundary predicate is read-only and production C1 remains unchanged.
+> **Continuation / current status (2026-10-09 14:20 UTC):** [Issue #58 handover](ISSUE58_CONTINUATION_HANDOVER.md). Foundation PR #63 **merged**, pinned CUDA staging syntax test PASS (ccache; no GPU run). Actual C2 reversible yielding not implemented; production C1 unchanged. Read handover before next engineering step.
 
 # NInfer documentation
 
