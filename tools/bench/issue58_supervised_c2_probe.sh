@@ -159,12 +159,25 @@ def run(name, tokens, delay):
                 if first_token is None and (delta.get("content") or delta.get("reasoning_content")):
                     first_token=round(time.monotonic()-t,3)
                 if choice.get("finish_reason"): finish_reason=choice["finish_reason"]
-            print(json.dumps({"request":name,"max_tokens":tokens,"http":resp.status,"ttft_seconds":first_token,"elapsed_seconds":round(time.monotonic()-t,3),"stream_events":events,"finish_reason":finish_reason}),flush=True)
+            result={"request":name,"max_tokens":tokens,"http":resp.status,"ttft_seconds":first_token,"elapsed_seconds":round(time.monotonic()-t,3),"stream_events":events,"finish_reason":finish_reason}
+            print(json.dumps(result),flush=True)
+            return result
     except Exception as exc:
-        print(json.dumps({"request":name,"max_tokens":tokens,"elapsed_seconds":round(time.monotonic()-t,3),"error":str(exc)}),flush=True)
+        result={"request":name,"max_tokens":tokens,"elapsed_seconds":round(time.monotonic()-t,3),"error":str(exc)}
+        print(json.dumps(result),flush=True)
+        return result
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
     jobs=[ex.submit(run,"long_1536_a",1536,0),ex.submit(run,"long_1536_b",1536,0.1),ex.submit(run,"short_256",256,2)]
-    for fut in jobs: fut.result()
+    results=[fut.result() for fut in jobs]
+by_name={r["request"]:r for r in results}
+assert set(by_name)=={"long_1536_a","long_1536_b","short_256"}, "missing results"
+for name,result in by_name.items():
+    assert result.get("http")==200, f"{name}: HTTP failure"
+    assert result.get("finish_reason")=="length", f"{name}: incomplete"
+    assert result.get("ttft_seconds") is not None, f"{name}: no tokens"
+assert by_name["short_256"]["ttft_seconds"] < 5, "short TTFT >= 5s"
+assert by_name["long_1536_b"]["ttft_seconds"] > by_name["long_1536_a"]["ttft_seconds"], "long turnover not observed"
+print("FAIRNESS_REGRESSION=PASS",flush=True)
 PY
 echo "=== C2 DIAGNOSTIC COMPLETE ==="
 } 2>&1 | tee -a "$LOG"
