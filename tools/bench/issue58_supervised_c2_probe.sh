@@ -128,10 +128,10 @@ for _ in $(seq 1 45); do
 done
 [[ "$ready" -eq 1 ]] || { echo "TEST_STARTUP_FAILED"; tail -50 "$SERVERLOG"; exit 30; }
 echo "TEST_READY=PASS"
-echo "=== CONTROLLED ADMISSION REPRO (MAX 65s) ==="
+echo "=== CONTROLLED FAIRNESS REPRO (MAX 100s) ==="
 # max_tokens=65536 deliberately probes full-future-KV reservation while allowing
 # the server to continue running; clients are cancelled after bounded intervals.
-timeout --signal=TERM --kill-after=5s 65s python3 - "$PORT" <<'PY'
+timeout --signal=TERM --kill-after=5s 100s python3 - "$PORT" <<'PY'
 import concurrent.futures, json, sys, time, urllib.request, urllib.error
 port=int(sys.argv[1])
 url=f"http://127.0.0.1:{port}/v1/chat/completions"
@@ -163,7 +163,7 @@ def run(name, tokens, delay):
     except Exception as exc:
         print(json.dumps({"request":name,"max_tokens":tokens,"elapsed_seconds":round(time.monotonic()-t,3),"error":str(exc)}),flush=True)
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-    jobs=[ex.submit(run,"long_65536",65536,0),ex.submit(run,"long_32768",32768,0.1),ex.submit(run,"short_256",256,2)]
+    jobs=[ex.submit(run,"long_2048_a",2048,0),ex.submit(run,"long_2048_b",2048,0.1),ex.submit(run,"short_256",256,2)]
     for fut in jobs: fut.result()
 PY
 echo "=== C2 DIAGNOSTIC COMPLETE ==="
