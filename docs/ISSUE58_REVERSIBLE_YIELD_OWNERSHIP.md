@@ -68,3 +68,8 @@ Commits `6948d21` and `57172ae` add `src/runtime/engine/issue58_transfer_gate.h`
 **Critical distinction:** the `TransferProof` booleans are inputs supplied by hypothetical future ownership code, *not independently attested evidence*. No caller currently emits them; there are no CUDA fences, page migration, GDN replay-state backup, real reservation accounting, cancellation unwinding, streaming reconstruction or scheduler integration. An external caller must not signal release/restore until independently verified, and failure after partial physical transfer will need a separate rollback/recovery owner. This proof gate does not itself guarantee exception-safe rollback.
 
 Next source implementation must first locate concrete KV allocation types and GDN state views, define who retains/relinquishes page-table entries and physical backing, and test exact snapshot/restore in isolation. Only after that should the transaction gate become an enforcement check on a real transfer path.
+
+
+## Resident-charge overflow guard (2026-10-09)
+
+Commits `f6ee549` and `9f5cb8a` extend the existing host-only `SuspendedOwnershipCharge` with `checked_charge_totals`: separately reports summed resident-device charges (text KV + backend KV + recurrent + hidden) and host offload bytes; rejects integer overflow and zero request identity. Host test now exercises exact totals and fail-closed invalid inputs. No claim that these counters reflect live allocator occupancy; all caller-provided charges must later be populated from authoritative page pool and state-store handles. This is not actual GPU state migration. Never subtract these totals from GPU usage until physical pages are provably released.
