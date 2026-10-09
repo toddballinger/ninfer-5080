@@ -1845,6 +1845,15 @@ private:
             request->lane                   = lane;
             request->admission_resources    = summary.admission;
             request->issue58_long_at_admission = is_long_generation(summary);
+            if (const char* trace = std::getenv("NINFER_ADMISSION_CLASS_TRACE");
+                trace && trace[0] == '1' && trace[1] == '\0') {
+                // Classification observability only. No prompt, output, or identity logged.
+                std::fprintf(stderr,
+                    "[ADMISSION-CLASS] id=%llu effective_max_output=%u long=%u lane=%u\n",
+                    static_cast<unsigned long long>(request->id),
+                    static_cast<unsigned>(summary.effective_output_tokens),
+                    static_cast<unsigned>(request->issue58_long_at_admission), lane);
+            }
             request->remaining_service_work = summary.service_work_quanta;
             request->backfill_epoch         = backfill_epoch;
             request->backfill_class         = backfill_class;
