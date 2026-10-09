@@ -21,6 +21,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -530,6 +532,7 @@ private:
         std::array<std::optional<Plan>, kMaximumConcurrency> lane_plans{};
         std::array<std::uint64_t, kMaximumConcurrency> lane_plan_versions{};
         AdmissionResources admission_resources;
+        bool issue58_long_at_admission = false;
         std::uint64_t remaining_service_work = 0;
         std::uint64_t backfill_epoch         = 0;
         BackfillClass backfill_class         = BackfillClass::None;
@@ -1704,8 +1707,41 @@ private:
         request->lane_plan_versions[lane] = lane_plan_versions_[lane];
     }
 
+    // Issue #58: optional non-preemptive latency isolation. Do not let two large
+    // generations occupy both C2 slots; preserve one slot for shorter work.
+    // This avoids KV/MTP checkpointing and never aborts an admitted generation.
+    [[nodiscard]] bool reserve_short_lane_enabled() const noexcept {
+        const char* value = std::getenv("NINFER_SHORT_LANE_RESERVE");
+        return max_concurrency_ == 2 && value && value[0] == '1' && value[1] == '\0';
+    }
+
+    [[nodiscard]] static bool is_long_generation(const RequestPlanSummary& plan) noexcept {
+        // A smaller threshold may be selected for bounded fairness tests.
+        std::uint32_t threshold = 8192;
+        if (const char* value = std::getenv("NINFER_LONG_OUTPUT_THRESHOLD")) {
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(value, &end, 10);
+            if (end != value && *end == '\0' && parsed >= 256 && parsed <= 65536) {
+                threshold = static_cast<std::uint32_t>(parsed);
+            }
+        }
+        return plan.effective_output_tokens > threshold;
+    }
+
+    [[nodiscard]] bool long_lane_guard(const std::shared_ptr<Request>& candidate) const {
+        if (!reserve_short_lane_enabled() || !candidate->base_plan ||
+            !is_long_generation(candidate->base_plan->summary())) { return false; }
+        for (const auto& active : slots_) {
+            if (active && active->issue58_long_at_admission) { return true; }
+        }
+        return false;
+    }
+
     [[nodiscard]] std::optional<LaneChoice>
     find_admission_lane(const std::shared_ptr<Request>& request) {
+        // The reservation must be enforced on the shared admission path,
+        // before either FIFO or protected-backfill can choose a lane.
+        if (long_lane_guard(request)) { return std::nullopt; }
         std::optional<LaneChoice> selected;
         std::uint32_t selected_reuse = 0;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
@@ -1808,6 +1844,7 @@ private:
             request->generated.reserve(summary.effective_output_tokens);
             request->lane                   = lane;
             request->admission_resources    = summary.admission;
+            request->issue58_long_at_admission = is_long_generation(summary);
             request->remaining_service_work = summary.service_work_quanta;
             request->backfill_epoch         = backfill_epoch;
             request->backfill_class         = backfill_class;
@@ -1904,7 +1941,74 @@ private:
                 return admit_planned_request(head, *head_lane, BackfillClass::None, 0);
             }
 
+            // Policy-blocked long FIFO head: admit one waiting short request on the
+            // vacant lane instead of letting the protection/drain logic strand it.
+            // Physical lane and KV admission checks still run in find_admission_lane.
+            if (long_lane_guard(head)) {
+                for (std::size_t i = 1; i < queued.size(); ++i) {
+                    const auto& candidate = queued[i];
+                    if (candidate->cancelled.load(std::memory_order_acquire) ||
+                        Clock::now() >= candidate->deadline) { continue; }
+                    try {
+                        ensure_base_plan(candidate);
+                        if (!is_long_generation(candidate->base_plan->summary())) {
+                            if (auto lane = find_admission_lane(candidate)) {
+                                return admit_planned_request(candidate, *lane,
+                                                             BackfillClass::None, 0);
+                            }
+                        }
+                    } catch (...) {
+                        (void)remove_pending_error(candidate, std::current_exception());
+                        control_progress = true;
+                    }
+                }
+                // Deliberate policy hold: physical admission is possible, so
+                // the frozen-incumbent protection invariant does not apply.
+                // Recheck on each completed GPU unit; do not enter Drain.
+                protection_.reset();
+                return control_progress ? AdmissionProgress::ControlProgress
+                                        : AdmissionProgress::None;
+            }
+
             const ActiveAdmissionSet active = active_admission_set();
+            // Issue #58: bounded opt-in admission trace; never alters allocation or scheduling.
+            // One snapshot per 10s while a FIFO head is blocked. Enable only for a
+            // controlled diagnostic process: NINFER_ADMISSION_TRACE=1.
+            if (const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
+                trace != nullptr && trace[0] == '1') {
+                const auto now = Clock::now();
+                if (last_admission_trace_ == Clock::time_point{} ||
+                    now - last_admission_trace_ >= std::chrono::seconds(10)) {
+                    last_admission_trace_ = now;
+                    std::uint64_t used_main = 0, used_backend = 0, used_lanes = 0;
+                    for (const ActiveAdmissionSnapshot& a : active.span()) {
+                        used_main += a.resources.main_kv_pages;
+                        used_backend += a.resources.backend_kv_pages;
+                        used_lanes += a.resources.active_lanes;
+                    }
+                    const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        head->deadline - now).count();
+                    std::fprintf(stderr,
+                        "[ADMISSION-TRACE] head=%llu queued=%zu active=%zu "
+                        "head_pages_main=%llu head_pages_backend=%llu "
+                        "used_pages_main=%llu used_pages_backend=%llu used_lanes=%llu "
+                        "capacity_pages_main=%llu capacity_pages_backend=%llu capacity_lanes=%llu "
+                        "deadline_remaining_ms=%lld protection_epoch=%llu protection_phase=%s\n",
+                        static_cast<unsigned long long>(head->id), queued.size(), active.size,
+                        static_cast<unsigned long long>(head_base.admission.main_kv_pages),
+                        static_cast<unsigned long long>(head_base.admission.backend_kv_pages),
+                        static_cast<unsigned long long>(used_main),
+                        static_cast<unsigned long long>(used_backend),
+                        static_cast<unsigned long long>(used_lanes),
+                        static_cast<unsigned long long>(admission_capacity_.main_kv_pages),
+                        static_cast<unsigned long long>(admission_capacity_.backend_kv_pages),
+                        static_cast<unsigned long long>(admission_capacity_.active_lanes),
+                        static_cast<long long>(remaining_ms),
+                        static_cast<unsigned long long>(protection_ ? protection_->epoch_id : 0),
+                        !protection_ ? "none" :
+                            protection_->phase == ProtectionPhase::Drain ? "drain" : "open");
+                }
+            }
             if (active.size == 0) {
                 throw std::logic_error("exclusive-feasible request cannot enter an idle Engine");
             }
@@ -1988,6 +2092,8 @@ private:
             return control_progress ? AdmissionProgress::ControlProgress : AdmissionProgress::None;
         }
     }
+
+    Clock::time_point last_admission_trace_{};
 
     void run_decode_round(const RoundMembership& membership) {
         const std::span<const std::uint32_t> lanes = membership.lane_span();
