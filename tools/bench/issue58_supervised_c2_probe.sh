@@ -142,8 +142,24 @@ def run(name, tokens, delay):
     req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer local-model"})
     try:
         with urllib.request.urlopen(req,timeout=100) as resp:
-            first=resp.readline()
-            print(json.dumps({"request":name,"max_tokens":tokens,"http":resp.status,"ttfb_seconds":round(time.monotonic()-t,3),"first_bytes":len(first)}),flush=True)
+            first_token=None
+            events=0
+            finish_reason=None
+            for line in resp:
+                if not line.startswith(b"data:"): continue
+                raw=line[5:].strip()
+                if raw == b"[DONE]": break
+                try:
+                    packet=json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                events+=1
+                choice=(packet.get("choices") or [{}])[0]
+                delta=choice.get("delta") or {}
+                if first_token is None and (delta.get("content") or delta.get("reasoning_content")):
+                    first_token=round(time.monotonic()-t,3)
+                if choice.get("finish_reason"): finish_reason=choice["finish_reason"]
+            print(json.dumps({"request":name,"max_tokens":tokens,"http":resp.status,"ttft_seconds":first_token,"elapsed_seconds":round(time.monotonic()-t,3),"stream_events":events,"finish_reason":finish_reason}),flush=True)
     except Exception as exc:
         print(json.dumps({"request":name,"max_tokens":tokens,"elapsed_seconds":round(time.monotonic()-t,3),"error":str(exc)}),flush=True)
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
