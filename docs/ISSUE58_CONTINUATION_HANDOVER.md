@@ -1,6 +1,18 @@
-# Issue #58 — continuation handover (2026-10-09, 12:09 UTC)
+# Issue #58 — continuation handover (updated 2026-10-09 14:20 UTC)
 
 > **Read first in a fresh chat.** This is an operational record of verified work, PRs, tests, environment and next actions. It does not claim production C2 is ready.
+
+## Latest authoritative checkpoint — 2026-10-09 14:20:50 UTC (2026-10-10 00:50 Adelaide)
+
+**Use this section first; later historical sections may describe older PR states.**
+
+- **PR #63 MERGED** into `main` by squash commit `960ebe2ad2e2545a3d996a82740847c1df1cc1cc`; foundation source HEAD before squash `8cf81fb43eecc1fddd4406e42309455e991bbc37`. Final host gate **PASS 3/3** (`issue58_yield_boundary_test`, `issue58_suspended_ownership_test`, `issue58_transfer_gate_test`); C1 HTTP200 before/after. Added move-clearing charge token and made `SuspensionTransaction` strictly nonmovable. Targeted C++ objects compiled with ccache earlier. **The full target build/link at final revision, CUDA/GPU tests and physical yielding remain NOT RUN / NOT IMPLEMENTED.**
+- **Issue #58 OPEN**: working C2 yield/checkpoint/resume, allocator release and starvation prevention remain unsolved; PR #62 historical draft regression remains separately tracked. Production `ninfer-local-model.service` **C1** remains untouched, HTTP200 as last checked.
+- **Experimental follow-on branch** `issue58-kv-transfer-followon` pinned staging HEAD `2efaa3bbe15173529df91df5223e7dde593ae179`. It predates the PR #63 squash; **do not merge it wholesale**. Port desired transfer files onto a new branch from current `main` or carefully reconcile history first.
+- **Latest pinned-staging validation: PASS** 2026-10-09 14:20:50 UTC. Ran as `toddballinger`, `ccache version 4.12.3`, extracted source at exact SHA `2efaa3b`, `ccache c++ -std=c++20 -Wall -Wextra -Werror -fsyntax-only` against the CUDA headers: `PINNED_STAGING_COMPILE=PASS`, `VALIDATION_EXIT_CODE=0`, C1 HTTP200/200. **No GPU execution, CUDA rebuild or production deployment.** This validates syntax and type contract, **not** pinned allocation lifetime or stream synchronization.
+- The earlier `sudo -n -u openclaw` script failed with `sudo: interactive authentication is required`. **Do not depend on noninteractive sudo** for ordinary compile gates. Successful workaround uses temporary git repository/source extraction as `toddballinger`, no sudo, no checkout of protected `/home/openclaw` trees. Previous syntax error from literal `\\n` in `issue58_kv_pinned_staging.h` was fixed in commit `2efaa3b`.
+- **Next implementation gate:** an independently owned, actually stream-safe pinned staging/copy transaction that tracks in-flight copies and refuses early reset/free/reuse; small host/compile-only tests before any standalone GPU roundtrip. Existing `KvPinnedStaging` relies on caller-managed stream completion; its destructor `cudaFreeHost` assumes completed CUDA work. Treat as *experimental*, not a proven lifecycle solution. Follow with allocator page capture stability, release/reacquire transaction, complete MTP/recurrent/hidden state, exact restoration and C2 fairness/TTFT qualification.
+- **No overnight/background GPU work authorised**; stop at documentation checkpoint. For every Brain script use ccache for **C++ and CUDA** launchers, prefer bounded existing builds, preserve C1 and copy concise report to clipboard via OSC52 without ending SSH session.
 
 ## Objective and invariants
 
