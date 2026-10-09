@@ -1,5 +1,6 @@
 #include "runtime/engine/issue58_suspended_ownership.h"
 #include <cassert>
+#include <limits>
 #include <type_traits>
 #include <utility>
 using namespace ninfer::runtime::issue58;
@@ -20,4 +21,14 @@ int main() {
     assert(moved.charge().recurrent_bytes==300);
     assert(moved.charge().hidden_bytes==400);
     assert(moved.charge().host_offload_bytes==500);
+    const auto totals = checked_charge_totals(moved.charge());
+    assert(totals.has_value());
+    assert(totals->resident_device_bytes == 1000);
+    assert(totals->host_offload_bytes == 500);
+    auto bad = moved.charge();
+    bad.text_kv_bytes = std::numeric_limits<std::size_t>::max();
+    assert(!checked_charge_totals(bad).has_value());
+    bad = moved.charge();
+    bad.request_id = 0;
+    assert(!checked_charge_totals(bad).has_value());
 }
