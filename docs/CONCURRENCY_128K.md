@@ -1,5 +1,34 @@
 # RTX 5080 128K Concurrency Qualification
 
+## October 9, 2026 — current-Q4 concurrency closeout
+
+**Decision: keep C1 for interactive OpenClaw. C2 delivered 1.511x better corpus productivity but is NOT interactive-production-qualified because of >600-second TTFT outliers.** Scheduler/admission is tracked as P0 [#58](https://github.com/toddballinger/ninfer-5080/issues/58); read-only postmortem tooling merged in [PR #59](https://github.com/toddballinger/ninfer-5080/pull/59).
+
+| Metric | C1 | C2 | C3 |
+|---|---:|---:|---:|
+| 75-job corpus completed | 75/75 | 75/75 | 66/75 (failed) |
+| Corpus makespan | 4700.981s | 3112.180s | 4328.394s before abort |
+| Queue timeout count | 0 | 0 | 1 (900s) |
+| TTFT P50 | 0.25s | 0.29s | 0.30s |
+| TTFT P95 | 0.37s | 2.25s | 647.54s |
+| TTFT max | 0.38s | 664.72s | 813.70s |
+| Completed requests with TTFT >600s | 0 | 2 | 4 |
+
+C3 TTFT excludes 9 requests not completed; statistics are not fully matched. C2 occupancy included 1317 one-second samples with running=1 and waiting=1; C3 included 1788 with running=1 and waiting=2. Actual admission wait and deferral reasons are not yet explicitly instrumented; TTFT includes queue, prefill and initial decode. Long requests can have 65536 output-token allowances against **131072 shared** Q4 KV; future-token reservation and KV-aware eligibility are leading hypotheses, NOT confirmed causes.
+
+Configuration: RTX 5080 16GB, same Qwen3.8-27B artifact, max context 131072, shared Q4 group64 KV capacity 131072, MTP3 draft3, Vision2048, host embeddings, CUDA Graph, rolling-tool, 75-job fixed-shuffle stochastic corpus seed 20260811. C1 pending timeout=180s; C2 and C3 timeout=900s.
+
+Short decode pilots: C2 98.14 aggregate tok/s, minimum observed free GPU memory 624MiB. C3 87.17 aggregate tok/s, minimum free 466MiB, planned slack 228MiB. C4 failed before serving any request: engine runtime reservation required 3,692,193,024 bytes versus 3,688,397,824 available, short by 3,795,200 bytes (3.62MiB). C4 Graph-off and cache-budget proposals remain unqualified research.
+
+Artifacts on Brain:
+- C1: /home/openclaw/issue32-c1-campaigns/c1-20261008T150834Z-818276
+- C2: /home/openclaw/issue32-c2-corpus/corpus-c2-20261008T232609Z-952752
+- C3: /home/openclaw/issue32-c3-corpus/corpus-c3-20261009T005806Z-985819
+- C4: /home/openclaw/issue32-c4-pilots/c4pilot-20261009T003705Z-981076
+
+**Current-Q4 phase concluded, not deployed.** Issue [#32](https://github.com/toddballinger/ninfer-5080/issues/32) remains open for further KV codec/memory study (rk4v4-e8, KVarN, rk2v4-e8). Issue [#58](https://github.com/toddballinger/ninfer-5080/issues/58) owns scheduler/resource eligibility telemetry, bounded fairness, and interactive C2 qualification. Preserve production max-concurrency=1 until the P0 gate passes.
+
+
 ## Status
 
 This document defines the current highest-priority bounded performance gate for the RTX 5080 production path.
