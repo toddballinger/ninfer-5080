@@ -15,12 +15,13 @@ struct KvAllocationCapturePlan {
 // eventual transfer completes. This function does not lock the pool or GPU.
 [[nodiscard]] inline KvAllocationCapturePlan
 plan_kv_allocation_capture(const PagedKVPool& pool,
-                           const PagedKVAllocation& allocation,
-                           KvPageOrder order) {
+                           const PagedKVAllocation& allocation) {
     if (!allocation.valid() || !allocation.belongs_to(pool) ||
         allocation.mapped_page_count()==0 ||
         allocation.mapped_page_count()!=allocation.page_ids().size())
         throw std::invalid_argument("KV allocation is not fully materialized in source pool");
+    const auto order=pool.plane_order()==PagedKVPlaneOrder::PageMajor
+        ?KvPageOrder::PageMajor:KvPageOrder::HeadMajor;
     KvAllocationCapturePlan plan;
     plan.entitlement=allocation.page_entitlement();
     plan.source_row=allocation.bound_row();
