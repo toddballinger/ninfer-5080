@@ -3,6 +3,7 @@
 
 #include "targets/qwen3_6/impl/runtime/schedule.h"
 #include "runtime/contract/decision_resources.h"
+#include "runtime/engine/issue58_yield_boundary_facts.h"
 #include "ninfer/ops/gdn_replay.h"
 #include "ninfer/ops/constrained_choice.h"
 #include "ninfer/ops/prepare_ragged_prefix.h"
@@ -1158,27 +1159,32 @@ bool ProgramImplCore::at_resolved_yield_boundary(std::uint32_t lane) const noexc
     if (lane >= max_concurrency) { return false; }
     const RequestControl& request = requests[lane];
     const SequenceState& sequence = sequences[lane];
-    // This is only a necessary condition for a future checkpoint. It never
-    // authorizes moving device allocations or clearing the physical lane.
-    // The frontier relationship uses subtraction after a nonzero guard so an
-    // invalid UINT32_MAX execution frontier cannot wrap back to zero.
-    if (request.lifecycle != Lifecycle::Active ||
-        request.pending.kind != PendingKind::None || request.prefill.has_value() ||
-        !sequence.kv.has_value() || sequence.retained || sequence.lane != lane ||
-        sequence.ledger_frontier == 0 ||
-        sequence.ledger_frontier != sequence.ledger.size() ||
-        sequence.prefix_identity.size() != sequence.ledger_frontier ||
-        sequence.execution_frontier != sequence.ledger_frontier - 1 ||
-        sequence.text_kv_valid != sequence.execution_frontier) {
-        return false;
-    }
-    if (speculative_backend == SpeculativeBackend::Mtp) {
-        return sequence.kv->backend.has_value() &&
-               sequence.mtp_kv_valid == sequence.execution_frontier;
-    }
-    // DFlash has additional context/rewrite state that is not yet covered
-    // by a reversible ownership-transfer contract: fail closed for now.
-    return speculative_backend == SpeculativeBackend::None;
+    const runtime::issue58::YieldBackend backend =
+        speculative_backend == SpeculativeBackend::None
+            ? runtime::issue58::YieldBackend::Ordinary
+            : (speculative_backend == SpeculativeBackend::Mtp
+                   ? runtime::issue58::YieldBackend::Mtp
+                   : runtime::issue58::YieldBackend::Unsupported);
+    const runtime::issue58::YieldBoundaryFacts facts{
+        .lane = lane,
+        .sequence_lane = sequence.lane,
+        .capacity = max_concurrency,
+        .active = request.lifecycle == Lifecycle::Active,
+        .pending_none = request.pending.kind == PendingKind::None,
+        .prefill_absent = !request.prefill.has_value(),
+        .kv_present = sequence.kv.has_value(),
+        .retained = sequence.retained,
+        .ledger_frontier = sequence.ledger_frontier,
+        .ledger_size = sequence.ledger.size(),
+        .prefix_size = sequence.prefix_identity.size(),
+        .execution_frontier = sequence.execution_frontier,
+        .text_kv_valid = sequence.text_kv_valid,
+        .backend_kv_present = sequence.kv.has_value() &&
+                              sequence.kv->backend.has_value(),
+        .mtp_kv_valid = sequence.mtp_kv_valid,
+        .backend = backend,
+    };
+    return runtime::issue58::at_resolved_yield_boundary(facts);
 }
 
 bool ProgramImplCore::has_retained_lane(std::uint32_t lane) const noexcept {
