@@ -1158,14 +1158,27 @@ bool ProgramImplCore::at_resolved_yield_boundary(std::uint32_t lane) const noexc
     if (lane >= max_concurrency) { return false; }
     const RequestControl& request = requests[lane];
     const SequenceState& sequence = sequences[lane];
-    return request.lifecycle == Lifecycle::Active &&
-           request.pending.kind == PendingKind::None && !request.prefill.has_value() &&
-           sequence.kv.has_value() && !sequence.retained &&
-           sequence.ledger_frontier == sequence.ledger.size() &&
-           sequence.execution_frontier + 1 == sequence.ledger_frontier &&
-           sequence.text_kv_valid >= sequence.execution_frontier &&
-           (speculative_backend != SpeculativeBackend::Mtp ||
-            sequence.mtp_kv_valid >= sequence.execution_frontier);
+    // This is only a necessary condition for a future checkpoint. It never
+    // authorizes moving device allocations or clearing the physical lane.
+    // The frontier relationship uses subtraction after a nonzero guard so an
+    // invalid UINT32_MAX execution frontier cannot wrap back to zero.
+    if (request.lifecycle != Lifecycle::Active ||
+        request.pending.kind != PendingKind::None || request.prefill.has_value() ||
+        !sequence.kv.has_value() || sequence.retained || sequence.lane != lane ||
+        sequence.ledger_frontier == 0 ||
+        sequence.ledger_frontier != sequence.ledger.size() ||
+        sequence.prefix_identity.size() != sequence.ledger_frontier ||
+        sequence.execution_frontier != sequence.ledger_frontier - 1 ||
+        sequence.text_kv_valid != sequence.execution_frontier) {
+        return false;
+    }
+    if (speculative_backend == SpeculativeBackend::Mtp) {
+        return sequence.kv->backend.has_value() &&
+               sequence.mtp_kv_valid == sequence.execution_frontier;
+    }
+    // DFlash has additional context/rewrite state that is not yet covered
+    // by a reversible ownership-transfer contract: fail closed for now.
+    return speculative_backend == SpeculativeBackend::None;
 }
 
 bool ProgramImplCore::has_retained_lane(std::uint32_t lane) const noexcept {
