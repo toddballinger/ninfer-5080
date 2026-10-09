@@ -1,5 +1,5 @@
 
-> **Issue #58 cross-chat continuation:** [handover, validated milestones and next engineering steps](docs/ISSUE58_CONTINUATION_HANDOVER.md). Production C1 remains in place; C2 reversible yielding is not yet implemented.
+> **Issue #58 status (2026-10-09 14:20 UTC):** [authoritative continuation handover](docs/ISSUE58_CONTINUATION_HANDOVER.md). PR #63 foundation **merged** (squash `960ebe2a`); experimental pinned CUDA staging **syntax test PASS** on follow-on branch `2efaa3b` using ccache, but no GPU transfer/resume validation. Production C1 remains healthy and unchanged. Real C2 reversible yielding is **not implemented**; Issue #58 remains open.
 
 # NInfer RTX 5080 — Qwen3.8-27B at true 128K + Vision on 16 GB
 
