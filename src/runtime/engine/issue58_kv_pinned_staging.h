@@ -21,7 +21,10 @@ public:
     KvPinnedStaging(KvPinnedStaging&& other) noexcept
         : data_(std::exchange(other.data_, nullptr)),
           size_(std::exchange(other.size_, 0)) {}
-    // Move assignment deliberately disabled: it could hide a cudaFreeHost error\n    // or free staging memory with in-flight async transfers.\n    KvPinnedStaging& operator=(KvPinnedStaging&&) = delete;\n    ~KvPinnedStaging() noexcept {
+    // Move assignment deliberately disabled: it could hide a cudaFreeHost error
+    // or free staging memory with in-flight async transfers.
+    KvPinnedStaging& operator=(KvPinnedStaging&&) = delete;
+    ~KvPinnedStaging() noexcept {
         // Contract: caller synchronizes every user stream before destruction.
         if (data_ != nullptr) (void)cudaFreeHost(data_);
     }
