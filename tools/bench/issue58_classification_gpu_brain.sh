@@ -138,7 +138,8 @@ url=f"http://127.0.0.1:{port}/v1/chat/completions"
 def run(name, tokens, delay):
     time.sleep(delay)
     t=time.monotonic()
-    body=json.dumps({"model":"local-model","messages":[{"role":"user","content":"Write at least 4000 numbered detailed paragraphs on concurrent scheduling, semaphores and queueing; continue sequentially without a conclusion."}],"max_tokens":tokens,"ninfer_short_operation":name=="hinted_16384","stream":True,"temperature":0.1}).encode()
+    prompt=("Explain semaphores in 80 words, then stop." if name=="hinted_16384" else "Write at least 4000 numbered detailed paragraphs on concurrent scheduling, semaphores and queueing; continue sequentially without a conclusion.")
+    body=json.dumps({"model":"local-model","messages":[{"role":"user","content":prompt}],"max_tokens":tokens,"ninfer_short_operation":name=="hinted_16384","stream":True,"temperature":0.1}).encode()
     req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","Authorization":"Bearer local-model"})
     try:
         with urllib.request.urlopen(req,timeout=100) as resp:
