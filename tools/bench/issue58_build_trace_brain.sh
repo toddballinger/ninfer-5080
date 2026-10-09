@@ -8,7 +8,7 @@ BUILD="${NINFER_ISSUE58_BUILD:-/home/openclaw/ninfer-issue58-trace-build}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT="/tmp/issue58-trace-build-${STAMP}-$$.log"
 RC=0
-{
+(
   echo "=== ISSUE58 ADMISSION TRACE BUILD ==="
   date -u
   echo "SOURCE=$SOURCE"
@@ -28,7 +28,7 @@ RC=0
   echo "=== NINFER SERVE COMPILE (NO EXECUTION) ==="
   cmake --build "$BUILD" --target ninfer-serve -j 4 || exit 15
   echo "BUILD_RESULT=PASS"
-} >"$REPORT" 2>&1 || RC=$?
+) >"$REPORT" 2>&1 || RC=$?
 cat "$REPORT"
 python3 - "$REPORT" "$RC" <<'PY'
 import base64,sys
