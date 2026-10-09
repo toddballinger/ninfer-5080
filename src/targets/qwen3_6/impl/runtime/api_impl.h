@@ -192,6 +192,11 @@ void Program<Variant>::abort_lane(std::uint32_t lane) noexcept {
 }
 
 template <>
+bool Program<Variant>::at_resolved_yield_boundary(std::uint32_t lane) const noexcept {
+    return impl_->at_resolved_yield_boundary(lane);
+}
+
+template <>
 bool Program<Variant>::has_retained_lane(std::uint32_t lane) const noexcept {
     return impl_->has_retained_lane(lane);
 }
