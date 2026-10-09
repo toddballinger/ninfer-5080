@@ -36,3 +36,12 @@ Status: **design/provenance only**, not an implemented suspension mechanism. Pro
 - Binary SHA-256: `00ea2e0e80372a6d88950d38d822f55d507b7cfb967157583430eb6b57aeb02f`.
 - Implemented only a **read-only target-private predicate** `ProgramImplCore::at_resolved_yield_boundary(uint32_t lane) const noexcept`. Returns true only for active lifecycle, no pending candidate, no prefill, present KV, non-retained sequence, contiguous ledger/frontier, and valid text/MTP KV frontiers. It does **not** save, free, move, restore or resume a request. No scheduler call-site or active yielding proved.
 - Compilation is **not an executable correctness or resume-exactness test**. No new GPU test was reported for this foundation code. Running production C1 has not been changed.
+
+
+## 2026-10-09 follow-up: fail-closed boundary tightening (commit 6056dff)
+
+The target-private read-only fence now rejects lane/sequence identity mismatch, zero/empty ledger, mismatched resident prefix identity length, non-contiguous ledger/execution frontier, text KV frontier mismatch, and MTP without backend KV or exact MTP frontier. The frontier calculation avoids unsigned wraparound. DFlash is explicitly ineligible until its context/rewrite transfer contract is established. No active scheduling, state transfer or production changes.
+
+**Still not sufficient for suspension:** even a true fence result does not establish that device kernels are quiescent, that CUDA graph scratch is safe, that linear-attention state is movable, that KV page table and allocator charges are independently transferrable, or that scheduler-owned streaming/cancellation can be atomically rebound. Callers must not interpret it as permission to evict a lane.
+
+**Next validation:** incremental compile of the single changed runtime header using existing PR #63 build directory and ccache; no GPU inference, no service stop. Runtime tests must later cover pending, prefill, empty, frontier mismatch, prefix mismatch, absent MTP backend allocation, lane mismatch and DFlash rejection. Do not claim these tests have run. Follow with a separately approved, isolated checkpoint/restore correctness gate before attempting live preemption.
