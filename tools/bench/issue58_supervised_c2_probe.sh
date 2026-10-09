@@ -34,7 +34,6 @@ restore() {
   local code=$?
   trap - EXIT INT TERM HUP
   echo "=== RESTORE PRODUCTION C1 ===" | tee -a "$LOG"
-  touch "$DISARM"
   if [[ -s "$TESTPIDFILE" ]]; then
     local tp; tp="$(cat "$TESTPIDFILE")"
     kill -TERM "$tp" 2>/dev/null || true
@@ -49,6 +48,7 @@ restore() {
       if curl -fsS --max-time 2 http://127.0.0.1:8080/health >>"$LOG" 2>&1; then
         echo "PRODUCTION_RESTORED=PASS" | tee -a "$LOG"
         RESTORED=1
+        touch "$DISARM"
         break
       fi
       sleep 2
@@ -77,7 +77,7 @@ echo "=== PREFLIGHT ==="
 sudo -n true || { echo "STOP: sudo noninteractive unavailable"; exit 22; }
 command -v timeout >/dev/null || { echo "STOP: timeout missing"; exit 23; }
 curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null || { echo "STOP: production unhealthy"; exit 24; }
-[[ ! -e "/proc/$(pgrep -f '^/home/toddballinger/issue58-test/ninfer-serve ' | head -1)/status" ]] || { echo "STOP: instrumented server already running"; exit 25; }
+if pgrep -f '^/home/toddballinger/issue58-test/ninfer-serve ' >/dev/null; then echo "STOP: instrumented server already running"; exit 25; fi
 [[ "$(systemctl --user show ninfer-local-model.service -p ActiveState --value)" == active ]] || { echo "STOP: production unit not active"; exit 26; }
 [[ "$(systemctl --user show ninfer-local-model.service -p MainPID --value)" != 0 ]] || { echo "STOP: no production PID"; exit 27; }
 ss -lnt | grep -q ":$PORT " && { echo "STOP: test port busy"; exit 28; }
