@@ -8,7 +8,7 @@ using namespace ninfer::runtime::issue58;
 static_assert(!std::is_copy_constructible_v<KvPinnedStaging>);
 static_assert(!std::is_copy_assignable_v<KvPinnedStaging>);
 static_assert(std::is_nothrow_move_constructible_v<KvPinnedStaging>);
-static_assert(std::is_nothrow_move_assignable_v<KvPinnedStaging>);
+static_assert(!std::is_move_assignable_v<KvPinnedStaging>);
 static_assert(std::is_nothrow_destructible_v<KvPinnedStaging>);
 static_assert(std::is_same_v<decltype(std::declval<KvPinnedStaging&>().allocate(1)),cudaError_t>);
 static_assert(std::is_same_v<decltype(std::declval<KvPinnedStaging&>().reset()),cudaError_t>);
