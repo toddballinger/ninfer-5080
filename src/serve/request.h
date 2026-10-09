@@ -173,6 +173,7 @@ struct GenerationRequest {
     std::vector<std::string> stop_strings;
     int max_tokens      = 0; // 0 => use server default
     bool max_tokens_set = false;
+    bool ninfer_short_operation = false; // opt-in, non-standard admission hint
     bool stream         = false;
     bool include_usage  = false;
     std::optional<bool> enable_thinking; // non-standard extension; falls back to server default
