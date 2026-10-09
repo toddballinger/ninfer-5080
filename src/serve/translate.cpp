@@ -290,6 +290,7 @@ ninfer::RequestOptions to_request_options(const GenerationRequest& request,
                                           const ServeOptions& server) {
     ninfer::RequestOptions options;
     options.execution.requested_output_tokens = static_cast<std::uint32_t>(request.max_tokens);
+    options.execution.ninfer_short_operation = request.ninfer_short_operation;
     options.execution.allow_prefix_reuse      = server.allow_prefix_reuse;
     options.execution.sampling             = resolve_sampling_overrides(request.sampling, server);
     options.output.raw                     = false;
