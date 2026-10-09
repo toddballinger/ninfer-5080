@@ -108,7 +108,7 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 echo "=== START C2 TRACED TEST ON PORT $PORT ==="
-NINFER_ADMISSION_TRACE=1 NINFER_SHORT_LANE_RESERVE=1 "$BIN" "$MODEL" \
+NINFER_ADMISSION_TRACE=1 NINFER_SHORT_LANE_RESERVE=1 NINFER_LONG_OUTPUT_THRESHOLD=1024 "$BIN" "$MODEL" \
   --host 127.0.0.1 --port "$PORT" --model-id local-model \
   --max-context 131072 --kv-capacity 131072 --prefill-chunk 1792 \
   --kv-dtype q4 --spec mtp --draft-tokens 3 \
@@ -128,7 +128,7 @@ for _ in $(seq 1 45); do
 done
 [[ "$ready" -eq 1 ]] || { echo "TEST_STARTUP_FAILED"; tail -50 "$SERVERLOG"; exit 30; }
 echo "TEST_READY=PASS"
-echo "=== CONTROLLED FAIRNESS REPRO (MAX 100s) ==="
+echo "=== CONTROLLED FAIRNESS REPRO (MAX 100s; 2048-token longs, threshold 1024) ==="
 # max_tokens=65536 deliberately probes full-future-KV reservation while allowing
 # the server to continue running; clients are cancelled after bounded intervals.
 timeout --signal=TERM --kill-after=5s 100s python3 - "$PORT" <<'PY'
