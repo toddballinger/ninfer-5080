@@ -1730,6 +1730,9 @@ private:
 
     [[nodiscard]] std::optional<LaneChoice>
     find_admission_lane(const std::shared_ptr<Request>& request) {
+        // The reservation must be enforced on the shared admission path,
+        // before either FIFO or protected-backfill can choose a lane.
+        if (long_lane_guard(request)) { return std::nullopt; }
         std::optional<LaneChoice> selected;
         std::uint32_t selected_reuse = 0;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
