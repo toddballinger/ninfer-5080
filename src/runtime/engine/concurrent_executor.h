@@ -21,6 +21,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -1905,6 +1907,44 @@ private:
             }
 
             const ActiveAdmissionSet active = active_admission_set();
+            // Issue #58: bounded opt-in admission trace; never alters allocation or scheduling.
+            // One snapshot per 10s while a FIFO head is blocked. Enable only for a
+            // controlled diagnostic process: NINFER_ADMISSION_TRACE=1.
+            if (const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
+                trace != nullptr && trace[0] == '1') {
+                const auto now = Clock::now();
+                if (last_admission_trace_ == Clock::time_point{} ||
+                    now - last_admission_trace_ >= std::chrono::seconds(10)) {
+                    last_admission_trace_ = now;
+                    std::uint64_t used_main = 0, used_backend = 0, used_lanes = 0;
+                    for (const ActiveAdmissionSnapshot& a : active.span()) {
+                        used_main += a.resources.main_kv_pages;
+                        used_backend += a.resources.backend_kv_pages;
+                        used_lanes += a.resources.active_lanes;
+                    }
+                    const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        head->deadline - now).count();
+                    std::fprintf(stderr,
+                        "[ADMISSION-TRACE] head=%llu queued=%zu active=%zu "
+                        "head_pages_main=%llu head_pages_backend=%llu "
+                        "used_pages_main=%llu used_pages_backend=%llu used_lanes=%llu "
+                        "capacity_pages_main=%llu capacity_pages_backend=%llu capacity_lanes=%llu "
+                        "deadline_remaining_ms=%lld protection_epoch=%llu protection_phase=%s\\n",
+                        static_cast<unsigned long long>(head->id), queued.size(), active.size,
+                        static_cast<unsigned long long>(head_base.admission.main_kv_pages),
+                        static_cast<unsigned long long>(head_base.admission.backend_kv_pages),
+                        static_cast<unsigned long long>(used_main),
+                        static_cast<unsigned long long>(used_backend),
+                        static_cast<unsigned long long>(used_lanes),
+                        static_cast<unsigned long long>(admission_capacity_.main_kv_pages),
+                        static_cast<unsigned long long>(admission_capacity_.backend_kv_pages),
+                        static_cast<unsigned long long>(admission_capacity_.active_lanes),
+                        static_cast<long long>(remaining_ms),
+                        static_cast<unsigned long long>(protection_ ? protection_->epoch_id : 0),
+                        !protection_ ? "none" :
+                            protection_->phase == ProtectionPhase::Drain ? "drain" : "open");
+                }
+            }
             if (active.size == 0) {
                 throw std::logic_error("exclusive-feasible request cannot enter an idle Engine");
             }
@@ -1988,6 +2028,8 @@ private:
             return control_progress ? AdmissionProgress::ControlProgress : AdmissionProgress::None;
         }
     }
+
+    Clock::time_point last_admission_trace_{};
 
     void run_decode_round(const RoundMembership& membership) {
         const std::span<const std::uint32_t> lanes = membership.lane_span();
