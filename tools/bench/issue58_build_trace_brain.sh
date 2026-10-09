@@ -39,10 +39,30 @@ RC=0
   export CUDACXX="$NVCC"
   echo "CUDACXX=$CUDACXX"
   "$CUDACXX" --version | tail -n 4
-  echo "=== CMAKE CONFIGURE ==="
-  cmake -S "$WORKTREE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER="$CUDACXX" || exit 14
+  echo "=== CCACHE DISCOVERY AND STATS ==="
+  CCACHE_BIN="$(command -v ccache || true)"
+  if [[ -z "$CCACHE_BIN" ]]; then
+    echo "CCACHE_REQUIRED_BUT_NOT_FOUND: install ccache or expose its existing path; refusing uncached build"
+    exit 17
+  fi
+  export CCACHE_DIR="${CCACHE_DIR:-/home/openclaw/.cache/ccache}"
+  mkdir -p "$CCACHE_DIR"
+  echo "CCACHE_BIN=$CCACHE_BIN"
+  echo "CCACHE_DIR=$CCACHE_DIR"
+  "$CCACHE_BIN" --version | head -n 2
+  "$CCACHE_BIN" -s || true
+  echo "=== CMAKE CONFIGURE (CXX + CUDA CCACHE) ==="
+  cmake -S "$WORKTREE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_COMPILER="$CUDACXX" \
+    -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE_BIN" \
+    -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE_BIN" \
+    -DCMAKE_CUDA_COMPILER_LAUNCHER="$CCACHE_BIN" || exit 14
+  echo "=== CCACHE LAUNCHER VERIFICATION ==="
+  grep -E '^CMAKE_(C|CXX|CUDA)_COMPILER_LAUNCHER:STRING=' "$BUILD/CMakeCache.txt" || true
   echo "=== NINFER SERVE COMPILE (NO EXECUTION) ==="
   cmake --build "$BUILD" --target ninfer-serve -j 4 || exit 15
+  echo "=== CCACHE STATS AFTER BUILD ==="
+  "$CCACHE_BIN" -s || true
   echo "BUILD_RESULT=PASS"
 ) >"$REPORT" 2>&1 || RC=$?
 cat "$REPORT"
