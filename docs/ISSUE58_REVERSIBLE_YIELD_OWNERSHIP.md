@@ -13,7 +13,7 @@ Status: **design/provenance only**, not an implemented suspension mechanism. Pro
 
 ## Proposed safe implementation stages
 
-1. **Fence:** add a target-private read-only `can_suspend_at_boundary(lane)` query returning false unless `RequestControl.lifecycle == Active`, `pending.kind == None`, no active prefill, no unpublished device round or in-flight state mutation. The scheduler must evaluate it only after successful resolve/publication and before a new decode. Add unit tests for rejection during pending and prefill.
+1. **Fence (implemented as a read-only predicate, build PASS):** target-private `ProgramImplCore::at_resolved_yield_boundary(lane)` returns false unless `RequestControl.lifecycle == Active`, `pending.kind == None`, no active prefill, no unpublished device round or in-flight state mutation. The scheduler must evaluate it only after successful resolve/publication and before a new decode. Add unit tests for rejection during pending and prefill.
 2. **Transfer object:** define a move-only `SuspendedSequence` ownership token spanning sequence state, request control, paged-KV allocation, linear/recurrent lane state and any retained/vision/prefix references. Do not merely copy `SequenceState` (its tensors are device views and its allocation owns global capacity).
 3. **Free or preserve capacity:** a suspended sequence must either keep its charged memory as a documented resident reservation or export its per-page KV and state to separately accounted host buffers, releasing page tables and slot resources atomically. Holding both decode slots' KV in place while claiming reusable slots cannot magically free VRAM/KV reservations. Fail closed if there is insufficient host memory or scratch space.
 4. **Resume:** reconstruct backend allocation, recurrent state and `SequenceState` on a permitted slot; verify ledger/frontier/MT P alignment and sampling determinism; reconnect original output sink/deadline/cancellation without duplicate stream publication.
@@ -28,3 +28,11 @@ Status: **design/provenance only**, not an implemented suspension mechanism. Pro
 - Counting a successful compile or short TTFT with opt-in lane isolation as proof of genuine preemption.
 
 **Merge gate:** do not merge active scheduling/suspension behavior without an end-to-end exact-resume test. Contract docs, diagnostics and fail-closed scaffolding may merge separately.
+
+
+## Verified incremental build — 2026-10-09 12:09 UTC
+
+- User's Brain compilation of branch `issue58-reversible-yield-foundation`, source commit `90b82cc24c6bc8bc455aef8814476dd9e0edc72b` succeeded: `BUILD_RESULT=PASS`, `BUILD_EXIT_CODE=0`.
+- Binary SHA-256: `00ea2e0e80372a6d88950d38d822f55d507b7cfb967157583430eb6b57aeb02f`.
+- Implemented only a **read-only target-private predicate** `ProgramImplCore::at_resolved_yield_boundary(uint32_t lane) const noexcept`. Returns true only for active lifecycle, no pending candidate, no prefill, present KV, non-retained sequence, contiguous ledger/frontier, and valid text/MTP KV frontiers. It does **not** save, free, move, restore or resume a request. No scheduler call-site or active yielding proved.
+- Compilation is **not an executable correctness or resume-exactness test**. No new GPU test was reported for this foundation code. Running production C1 has not been changed.
