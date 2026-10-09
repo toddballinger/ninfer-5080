@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft PR #61; not yet merged or approved for production. Default behavior unchanged. This documents an **optional trusted-caller optimization**, not a standard OpenAI / Anthropic protocol field or a reliable inference about generated length.
+Opt-in feature validated in PR #61; this does not constitute approval to deploy C2 in production. Default behavior unchanged. This documents an **optional trusted-caller optimization**, not a standard OpenAI / Anthropic protocol field or a reliable inference about generated length.
 
 Under `--max-concurrency 2`, `NINFER_SHORT_LANE_RESERVE=1` isolates one lane from **two simultaneously admitted long-classified generations**. The baseline classifier is `effective_output_tokens > NINFER_LONG_OUTPUT_THRESHOLD` (default 8192). Most logged requests with `requested_output_tokens=16384` actually complete under 1024 tokens, but *that cannot be known at admission*. Never classify solely from post-hoc completion length.
 
@@ -24,11 +24,11 @@ This flag does **not** authenticate clients: any party able to submit requests t
 
 ## Existing Brain evidence
 
-2026-10-09 supervised RTX 5080 C2 GPU test, threshold 1024: long A (1536 output allowance) HTTP200 TTFT 0.204s; hinted 16384-budget request HTTP200 TTFT 0.207s, finish=stop; long B HTTP200 TTFT 27.889s and finish=length. Test passed, original C1 restored. Report `/tmp/issue58-c2-eLi6Ar`. This verifies the specific admission scenario, *not* under-load fairness against a malicious or misclassified hint, production C2, or universal client support.
+2026-10-09 final supervised RTX 5080 C2 GPU test, threshold 1024: long A (1536 output allowance) HTTP200 TTFT 0.204s; hinted 16384-budget request HTTP200 TTFT 0.200s, finish=stop; long B HTTP200 TTFT 28.303s and finish=length. Invalid hint types (string, number, array) each returned HTTP400. Tests passed, original C1 restored. Report `/tmp/issue58-c2-CYj73Q`. This verifies the specific admission scenario, *not* under-load fairness against a malicious or misclassified hint, production C2, or universal client support.
 
 ## Release gates
 
-- Build (passed on Brain; 2026-10-09), API shape/type checks, explicit-hint-off negative case and unhinted compatibility checks (pending), and adversarial falsely-hinted long traffic review.
+- Build, HTTP invalid-type rejection, hinted admission behavior and supervised restoration passed on Brain (2026-10-09). Explicit-hint-off negative integration check, absent-hint interoperability, and adversarial falsely-hinted long traffic still warrant wider regression coverage prior to production deployment.
 - Integrate one **known-bounded** short-operation class from a trusted client. Do **not** tag all agent/tool requests or all 16K-budget requests as short.
 - Re-run controlled C2 checks with restoration watchdog; leave C1 production unchanged until separate approval.
 - Long term: correct client-neutral time slicing / KV+MTP checkpointing and resume makes hint less necessary; Issue #58 stays open.
