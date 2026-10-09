@@ -2,6 +2,7 @@
 # Issue 58 build-only validation. NO GPU serving, service stops, or workloads.
 # Logs stay on Brain and a compact report is copied via OSC52 even if build fails.
 set -uo pipefail
+export GIT_PAGER=cat PAGER=cat GIT_TERMINAL_PROMPT=0
 SOURCE="${NINFER_SOURCE:-/home/openclaw/ninfer-5080-issue32-concurrency}"
 WORKTREE="${NINFER_ISSUE58_WORKTREE:-/home/openclaw/ninfer-issue58-trace}"
 BUILD="${NINFER_ISSUE58_BUILD:-/home/openclaw/ninfer-issue58-trace-build}"
@@ -12,7 +13,7 @@ RC=0
   echo "=== ISSUE58 ADMISSION TRACE BUILD ==="
   date -u
   echo "SOURCE=$SOURCE"
-  git -C "$SOURCE" fetch origin issue58-source-admission-triage || exit 10
+  git -C "$SOURCE" fetch origin "refs/heads/issue58-source-admission-triage:refs/remotes/origin/issue58-source-admission-triage" || exit 10
   if [[ ! -e "$WORKTREE/.git" ]]; then
      if [[ -e "$WORKTREE" ]]; then
         echo "ERROR: existing non-worktree path $WORKTREE; refusing to overwrite" ; exit 11
@@ -23,8 +24,23 @@ RC=0
   echo "HEAD=$(git -C "$WORKTREE" rev-parse HEAD)"
   echo "=== DIFF VALIDATION ==="
   git -C "$WORKTREE" diff --check HEAD~1 HEAD || exit 13
+  echo "=== CUDA COMPILER DISCOVERY ==="
+  NVCC=""
+  for candidate in "${CUDACXX:-}" "${CUDA_HOME:-}/bin/nvcc" "${CUDA_PATH:-}/bin/nvcc" /usr/local/cuda/bin/nvcc /usr/local/cuda-13.4/bin/nvcc /usr/local/cuda-13.3/bin/nvcc /usr/local/cuda-13.2/bin/nvcc; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then NVCC="$candidate"; break; fi
+  done
+  if [[ -z "$NVCC" ]]; then NVCC="$(command -v nvcc || true)"; fi
+  if [[ -z "$NVCC" ]]; then
+    echo "CUDA_COMPILER_NOT_FOUND: nvcc is not accessible; no install or production changes attempted"
+    ls -ld /usr/local/cuda* /opt/cuda* /usr/bin/nvcc 2>/dev/null || true
+    find /home/openclaw -maxdepth 5 -name CMakeCache.txt -print 2>/dev/null | head -12
+    exit 16
+  fi
+  export CUDACXX="$NVCC"
+  echo "CUDACXX=$CUDACXX"
+  "$CUDACXX" --version | tail -n 4
   echo "=== CMAKE CONFIGURE ==="
-  cmake -S "$WORKTREE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release || exit 14
+  cmake -S "$WORKTREE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER="$CUDACXX" || exit 14
   echo "=== NINFER SERVE COMPILE (NO EXECUTION) ==="
   cmake --build "$BUILD" --target ninfer-serve -j 4 || exit 15
   echo "BUILD_RESULT=PASS"
