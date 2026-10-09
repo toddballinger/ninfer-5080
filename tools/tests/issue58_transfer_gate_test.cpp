@@ -3,7 +3,8 @@
 #include <type_traits>
 using namespace ninfer::runtime::issue58;
 static_assert(!std::is_copy_constructible_v<SuspensionTransaction>);
-static_assert(std::is_nothrow_move_constructible_v<SuspensionTransaction>);
+static_assert(!std::is_move_constructible_v<SuspensionTransaction>);
+static_assert(!std::is_move_assignable_v<SuspensionTransaction>);
 constexpr TransferProof complete{
     .resolved_boundary=true,.cuda_quiesced=true,
     .text_kv_backed_up=true,.backend_kv_backed_up=true,
