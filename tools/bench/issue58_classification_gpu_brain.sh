@@ -77,7 +77,7 @@ echo "=== PREFLIGHT ==="
 sudo -n true || { echo "STOP: sudo noninteractive unavailable"; exit 22; }
 command -v timeout >/dev/null || { echo "STOP: timeout missing"; exit 23; }
 curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null || { echo "STOP: production unhealthy"; exit 24; }
-if pgrep -f '^/home/toddballinger/issue58-test/ninfer-serve ' >/dev/null; then echo "STOP: instrumented server already running"; exit 25; fi
+if pgrep -f '^/home/toddballinger/issue58-test/ninfer-classification-serve ' >/dev/null; then echo "STOP: instrumented server already running"; exit 25; fi
 [[ "$(systemctl --user show ninfer-local-model.service -p ActiveState --value)" == active ]] || { echo "STOP: production unit not active"; exit 26; }
 [[ "$(systemctl --user show ninfer-local-model.service -p MainPID --value)" != 0 ]] || { echo "STOP: no production PID"; exit 27; }
 ss -lnt | grep -q ":$PORT " && { echo "STOP: test port busy"; exit 28; }
@@ -91,7 +91,7 @@ sudo -n bash -c 'nohup bash -c '"'"'
   echo "WATCHDOG_FIRED=$(date -u -Is)" >>"$root/watchdog.log"
   if [[ -s "$root/test.pid" ]]; then
       pid="$(cat "$root/test.pid")"
-      if [[ -r "/proc/$pid/cmdline" ]] && tr "\0" " " < "/proc/$pid/cmdline" | grep -q "^/home/toddballinger/issue58-test/ninfer-serve "; then
+      if [[ -r "/proc/$pid/cmdline" ]] && tr "\0" " " < "/proc/$pid/cmdline" | grep -q "^/home/toddballinger/issue58-test/ninfer-classification-serve "; then
           kill -TERM "$pid" 2>/dev/null || true
       fi
   fi
@@ -128,6 +128,23 @@ for _ in $(seq 1 45); do
 done
 [[ "$ready" -eq 1 ]] || { echo "TEST_STARTUP_FAILED"; tail -50 "$SERVERLOG"; exit 30; }
 echo "TEST_READY=PASS"
+echo "=== HTTP REQUEST-SHAPE COMPATIBILITY GATE ==="
+python3 - "$PORT" <<'PY'
+import json,sys,urllib.request,urllib.error
+url=f"http://127.0.0.1:{int(sys.argv[1])}/v1/chat/completions"
+base={"model":"local-model","messages":[{"role":"user","content":"reply OK"}],"max_tokens":32}
+for name,field in (("hint_invalid_string","yes"),("hint_invalid_number",1),("hint_invalid_array",[])):
+  body={**base,"ninfer_short_operation":field}
+  req=urllib.request.Request(url,data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
+  try:
+    with urllib.request.urlopen(req,timeout=6) as response:
+      code=response.status
+  except urllib.error.HTTPError as exc:
+    code=exc.code
+  print(f"{name}_HTTP={code}",flush=True)
+  assert code==400,f"{name}: unexpected HTTP {code}"
+print("API_TYPE_REGRESSION=PASS",flush=True)
+PY
 echo "=== CLASSIFICATION HINT REPRO (MAX 100s; two long budgets, one 16K short-hint) ==="
 # max_tokens=65536 deliberately probes full-future-KV reservation while allowing
 # the server to continue running; clients are cancelled after bounded intervals.
