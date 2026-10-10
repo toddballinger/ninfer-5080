@@ -76,6 +76,29 @@ int main() {
                call("get_weather", R"({"city":)"), false, "ARGUMENT_JSON_INVALID");
     case_check("nonobject JSON", {w}, automatic,
                call("get_weather", "[]"), false, "ARGUMENT_JSON_INVALID");
+    // Distinguishing security regression: last-key-wins parsing would accept
+    // the second string and hide the earlier, schema-invalid numeric value.
+    case_check("duplicate argument bypass", {w}, automatic,
+               call("get_weather", R"({"city":42,"city":"Paris"})"),
+               false, "DUPLICATE_PARAMETER");
+    case_check("duplicate valid values", {w}, automatic,
+               call("get_weather", R"({"city":"Paris","city":"London"})"),
+               false, "DUPLICATE_PARAMETER");
+    case_check("nested duplicate argument", {definition("nested_dup",
+               R"({"type":"object","properties":{"payload":{"type":"object","properties":{"city":{"type":"string"}}}}})")},
+               automatic, call("nested_dup", R"({"payload":{"city":42,"city":"Paris"}})"),
+               false, "DUPLICATE_PARAMETER");
+    case_check("duplicate inside array object", {definition("array_dup",
+               R"({"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"city":{"type":"string"}}}}}})")},
+               automatic, call("array_dup", R"({"items":[{"city":42,"city":"Paris"}]})"),
+               false, "DUPLICATE_PARAMETER");
+    case_check("same property in distinct objects allowed", {definition("array_dup",
+               R"({"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"city":{"type":"string"}}}}}})")},
+               automatic, call("array_dup", R"({"items":[{"city":"Paris"},{"city":"London"}]})"), true);
+    case_check("duplicate schema type key", {definition("get_weather",
+               R"({"type":"string","type":"object"})")},
+               automatic, call("get_weather", "{}"), false, "SCHEMA_UNSUPPORTED");
+
     case_check("unsupported constraint",
                {definition("get_weather", R"({"type":"object","unevaluatedProperties":false})")},
                automatic, call("get_weather", "{}"), false, "SCHEMA_UNSUPPORTED");
