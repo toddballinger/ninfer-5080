@@ -1,6 +1,6 @@
 # Issue #58 — offline request-event timeline evidence gate
 
-**Status: ChatGPT-authored CPU-only tool and tests; host validation pending.** This is a narrow supplement to existing #58 forensics, not a new scheduler or a production C2 fix.
+**Status: Initial host validation passed; independent review correction pending final host revalidation.** This is a narrow supplement to existing #58 forensics, not a new scheduler or a production C2 fix.
 
 Base `main`: `95b5c5e886046b23583c39e409209a77d79922c6`.
 
@@ -45,3 +45,9 @@ Allow at most two bounded repairs for deterministic host-only failures, then rer
 ## Next gated engineering question
 
 To separate queue wait from prefill, #58 must instrument independently observed arrival/queue-enter, admission attempt, actual admission, admission-deferral reason and relevant lane/KV eligibility; then reproduce the prior long-output-plus-short-request starvation case on a **separately authorised** supervised candidate environment. Existing #58 safety/ownership work should be reused, not supplanted. A timeline assembled from old `request_start` events cannot prove whether starvation is caused by KV eligibility, lane occupancy, or queue policy.
+
+## Independent review correction — 2026-10-10
+
+OpenClaw MAIN validated original code HEAD `3468b167e44a6555460ca434fa21c8ab65653c63`: Python 3.14.4, 9 timeline tests RC0, 3 existing admission-forensics tests RC0, py_compile RC0, diff/scope RC0. Evidence: https://github.com/toddballinger/ninfer-5080/pull/72#issuecomment-6097267290.
+
+Review identified a narrowly scoped reporting issue: a terminal timestamp preceding start was flagged as anomalous, but also yielded a misleading negative `start_to_terminal_ms`. The current tool now sets the elapsed field to null for reversed event order, with an explicit assertion in the existing boundary test. No new test cases or changed file scope. **Original host PASS does not validate the amended code HEAD; rerun the full nine-plus-three gate.** No inference of queue wait or C2 readiness, and Issue #58 remains open.
