@@ -279,6 +279,8 @@ PreparedRequest GenerationService::prepare(const GenerationRequest& request,
     prepared.include_usage                 = request.include_usage;
     prepared.tool_capable                  = request.uses_tools() || request.has_tool_history();
     prepared.tool_name_max_length          = request.tool_name_max_length;
+    prepared.declared_tools                 = request.tools;
+    prepared.declared_tool_choice           = request.tool_choice;
     const ResolvedPromptSemantics semantics =
         resolve_prompt_semantics(request, options_, prompt_capabilities_);
     prepared.enable_thinking                   = semantics.enable_thinking;
