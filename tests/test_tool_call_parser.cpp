@@ -158,8 +158,14 @@ int test_incremental_filter_fallback() {
 // golden output or captured model responses. Format basis: the Qwen wire examples
 // in test_single_call/test_multiple_calls_and_json_values above; stream basis:
 // ToolCallStreamFilter's public header contract. No upstream capture is claimed.
-// Policy expectations below intentionally pin current behavior, including quoted
-// marker fallback, accepting undeclared names, and last duplicate parameter wins.
+// CHARACTERIZATION ONLY: expectations below pin observed parser behavior; they
+// are NOT approval of the security or recovery contract required by Issue #27.
+// In particular, accepting an undeclared name, silently overwriting duplicate
+// parameters, and returning raw incomplete markup remain outstanding defects.
+// This helper receives no declared-tool registry or argument schema; therefore
+// these fixtures CANNOT establish safe tool dispatch or end-to-end compatibility.
+// Quoted reasoning markers below describe parser output, not reasoning-channel
+// correctness. No captured upstream/model trace is claimed for these fixtures.
 enum class CorpusCategory { quoted, later_call, name, duplicate, stream, client_limit };
 
 struct ExpectedCall {
@@ -218,6 +224,10 @@ int test_regression_corpus() {
 
     accepted("valid-first-control", CorpusCategory::later_call, first, 64, "",
              {{"first", Json{{"value", 1}}}});
+    // CURRENTLY UNSAFE CHARACTERIZATION: the parser demotes a complete first
+    // call to raw assistant text when a later region is malformed. Expected
+    // future contract: recover only validated complete calls and never leak
+    // untrusted incomplete tool markup as ordinary assistant content.
     fallback("later-missing-tool-close", CorpusCategory::later_call,
              first + "\n<tool_call>\n<function=second>\n</function>");
     fallback("later-missing-function-close", CorpusCategory::later_call,
@@ -236,6 +246,17 @@ int test_regression_corpus() {
     fallback("quoted-complete-call-in-reasoning", CorpusCategory::quoted,
              quoted_prefix + wire_call("example") + "\" is not a request.</think>\n" + first,
              64, quoted_prefix);
+    // A quoted reasoning close is not a real end-of-reasoning delimiter. This
+    // direct parser presently treats the prefix as opaque text; it does not
+    // establish that the upstream reasoning splitter preserves channel state.
+    const std::string quoted_think_close =
+        "<think>The literal \"</think>\" appears in documentation; still thinking.</think>";
+    accepted("quoted-think-close-before-valid-call", CorpusCategory::quoted,
+             quoted_think_close + "\n" + first, 64, quoted_think_close,
+             {{"first", Json{{"value", 1}}}});
+    fallback("quoted-think-close-without-tool", CorpusCategory::quoted,
+             quoted_think_close);
+
     const std::string harmless_reasoning =
         "<think>Quoted \"<function=example>\" and \"<parameter=x>\".</think>";
     accepted("quoted-non-tool-markers", CorpusCategory::quoted,
@@ -247,10 +268,15 @@ int test_regression_corpus() {
     fallback("punctuation-in-name", CorpusCategory::name, wire_call("bad.name"));
     fallback("missing-function-name-delimiter", CorpusCategory::name,
              "<tool_call>\n<function=broken\n</function>\n</tool_call>");
+    // CURRENTLY UNSAFE CHARACTERIZATION: syntax/length acceptance alone does
+    // not authorize an undeclared tool. Issue #27 requires response-boundary
+    // validation against caller-declared tools and JSON argument schemas.
     // This parser accepts only a length limit, not a declared-tool registry.
     accepted("undeclared-syntactically-valid-name", CorpusCategory::name,
              wire_call("undeclared_7-tool"), 64, "", {{"undeclared_7-tool", Json::object()}});
 
+    // CURRENTLY LOSSY CHARACTERIZATION: a duplicate argument silently wins
+    // without diagnostics. Issue #27 must specify a safe deterministic policy.
     accepted("duplicate-string-last-wins", CorpusCategory::duplicate,
              wire_call("duplicate", "<parameter=x>first</parameter>\n"
                                     "<parameter=x>second</parameter>\n"),
