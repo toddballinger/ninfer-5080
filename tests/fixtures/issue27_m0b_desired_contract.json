@@ -1,0 +1,498 @@
+{
+  "fixture_version": 1,
+  "task_id": "ISSUE27_M0B_OUTPUT_SAFETY_CONTRACT",
+  "kind": "DESIRED_CONTRACT_DATA_NOT_EXECUTABLE",
+  "source": "Independently hand-authored from Issue #27 requirements; not captured model output or parser-produced golden values",
+  "baseline_note": "Merged M0 corpus pins current behavior. These rows specify future fail-closed behavior; do not run as required-green CI against current parser.",
+  "shared_tool_schemas": {
+    "weather": {
+      "name": "get_weather",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "city"
+        ],
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "echo": {
+      "name": "echo",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "id": "allowed-declared",
+      "gate": "allowlist",
+      "declared": [
+        "weather"
+      ],
+      "tool_choice": "auto",
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "Paris"
+            }
+          }
+        ],
+        "diagnostic": null
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-undeclared",
+      "gate": "allowlist",
+      "declared": [
+        "echo"
+      ],
+      "tool_choice": "auto",
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "UNDECLARED_TOOL"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-no-tools",
+      "gate": "allowlist",
+      "declared": [],
+      "tool_choice": "auto",
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "UNDECLARED_TOOL"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-choice-none",
+      "gate": "allowlist",
+      "declared": [
+        "weather"
+      ],
+      "tool_choice": "none",
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "TOOL_CHOICE_DENIED"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-named-mismatch",
+      "gate": "allowlist",
+      "declared": [
+        "weather",
+        "echo"
+      ],
+      "tool_choice": "named:echo",
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "TOOL_CHOICE_DENIED"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-case-variant",
+      "gate": "allowlist",
+      "declared": [
+        "weather"
+      ],
+      "tool_choice": "auto",
+      "candidate": {
+        "name": "Get_Weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "UNDECLARED_TOOL"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-name-65-openai",
+      "gate": "name_limits",
+      "client": "openai",
+      "name_limit": 64,
+      "declared_name_length": 65,
+      "candidate": {
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "arguments": {},
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "NAME_LENGTH"
+      },
+      "expected_red_on_current_runtime": false
+    },
+    {
+      "id": "reject-required-argument",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {},
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "ARGUMENT_SCHEMA_INVALID"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-wrong-type",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": 42
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "ARGUMENT_SCHEMA_INVALID"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-additional-property",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris",
+          "admin": true
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "ARGUMENT_SCHEMA_INVALID"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-malformed-json",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments_raw": "{\"city\":",
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "ARGUMENT_JSON_INVALID"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-unsupported-schema",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "schema_override": {
+        "type": "object",
+        "unevaluatedProperties": false
+      },
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "SCHEMA_UNSUPPORTED"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "reject-duplicate-parameter",
+      "gate": "schema",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments_raw": "<parameter=city>Paris</parameter><parameter=city>London</parameter>",
+        "complete": true,
+        "encoding": "qwen_parameters"
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [],
+        "diagnostic": "DUPLICATE_PARAMETER"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "recover-valid-first-only",
+      "gate": "malformed_later",
+      "declared": [
+        "weather"
+      ],
+      "candidate_sequence": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "city": "Paris"
+          },
+          "complete": true
+        },
+        {
+          "name": "echo",
+          "arguments_raw": "{\"message\":",
+          "complete": false
+        }
+      ],
+      "expected": {
+        "safe_text": "",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "Paris"
+            }
+          }
+        ],
+        "diagnostic": "INCOMPLETE_TOOL_REGION"
+      },
+      "policy_dependency": "Allowed only after complete+schema-valid call proven independently; otherwise emit no calls",
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "suppress-raw-incomplete",
+      "gate": "markup",
+      "declared": [
+        "weather"
+      ],
+      "generated": "Hello <tool_call><function=get_weather>",
+      "expected": {
+        "safe_text": "Hello ",
+        "calls": [],
+        "diagnostic": "INCOMPLETE_TOOL_REGION"
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "quoted-think-close",
+      "gate": "reasoning",
+      "declared": [
+        "weather"
+      ],
+      "generated_channels": {
+        "reasoning": "Reasoning quotes \"</think>\" but continues.",
+        "content": "Done."
+      },
+      "expected": {
+        "safe_text": "Done.",
+        "calls": [],
+        "diagnostic": null,
+        "reasoning_channel_stays_open_through_quote": true
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "quoted-tool-call-example",
+      "gate": "reasoning",
+      "declared": [
+        "weather"
+      ],
+      "generated_channels": {
+        "reasoning": "Example \"<tool_call><function=get_weather></function></tool_call>\" is quoted.",
+        "content": "Done."
+      },
+      "expected": {
+        "safe_text": "Done.",
+        "calls": [],
+        "diagnostic": null
+      },
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "stream-truncated-at-length",
+      "gate": "stream",
+      "declared": [
+        "weather"
+      ],
+      "generated": "Safe. <tool_call><function=get_weather>",
+      "finish_event": "length",
+      "expected": {
+        "safe_text": "Safe. ",
+        "calls": [],
+        "diagnostic": "INCOMPLETE_TOOL_REGION",
+        "no_raw_markup": true
+      },
+      "split_policy": "all-two-chunk-and-bytewise",
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "stream-cancel-uncommitted",
+      "gate": "stream",
+      "declared": [
+        "weather"
+      ],
+      "generated": "Safe. <tool_call><function=get_weather>",
+      "finish_event": "cancelled",
+      "expected": {
+        "safe_text": "Safe. ",
+        "calls": [],
+        "diagnostic": "CANCELLED_UNCOMMITTED",
+        "no_raw_markup": true
+      },
+      "split_policy": "all-two-chunk-and-bytewise",
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "stable-history-identity",
+      "gate": "identity",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "Paris"
+            }
+          }
+        ],
+        "diagnostic": null,
+        "raw_token_ids_unchanged": true,
+        "canonical_history_unchanged": true,
+        "prefix_cache_identity_unchanged": true
+      },
+      "verification": "Requires instrumentation at generation/translation boundary; JSON declaration alone is not proof",
+      "expected_red_on_current_runtime": true
+    },
+    {
+      "id": "openai-anthropic-parity",
+      "gate": "translation",
+      "declared": [
+        "weather"
+      ],
+      "candidate": {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "complete": true
+      },
+      "expected": {
+        "safe_text": "",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "Paris"
+            }
+          }
+        ],
+        "diagnostic": null,
+        "wire_parity": true
+      },
+      "verification": "Requires stream/nonstream protocol E2E tests and tool-loop evidence",
+      "expected_red_on_current_runtime": true
+    }
+  ],
+  "global_invariants": [
+    "No callable tool not exactly declared in originating request",
+    "No schema-invalid or unsupported-schema callable tool",
+    "No unsafe incomplete markup exposed as assistant visible text",
+    "No call or text emission before safe streaming commit boundary",
+    "No modification of generated token IDs, canonical history or prefix cache identity",
+    "Streaming semantic results match non-streaming results across splits and cancellation"
+  ],
+  "validation_note": "Parse JSON only for M0B. M1 must introduce actual executable desired-contract tests with separately reviewed runtime APIs."
+}
