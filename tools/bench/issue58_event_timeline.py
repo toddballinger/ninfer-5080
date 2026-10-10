@@ -47,7 +47,8 @@ def inspect_events(events):
             flags.append("terminal_before_start")
         if flags:
             anomalies.append({"namespace": namespace, "request_id": rid, "flags": flags})
-        elapsed = (finishes[0][0] - starts[0][0]) if (len(starts) == len(finishes) == 1\n                   and finishes[0][0] >= starts[0][0]) else None
+        elapsed = (finishes[0][0] - starts[0][0]) if (len(starts) == len(finishes) == 1
+                   and finishes[0][0] >= starts[0][0]) else None
         records.append({
             "namespace": namespace, "request_id": rid,
             "start_unix_ms": starts[0][0] if len(starts) == 1 else None,
