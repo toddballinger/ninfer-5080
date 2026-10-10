@@ -1,6 +1,6 @@
 # Issue #27 M1B — CPU-only response-projection seam
 
-Status: **dependent draft plan, not a tested runtime fix**. TASK_ID: `ISSUE27_M1B_CPU_RESPONSE_SEAM`. Based on M1A PR #66 HEAD `a7fe8418b280332ad0220443bb27e489cf344adb`. Merge M1A **not** authorised; M1B must land after it and must not silently become a production deployment.
+Status: **implemented host-only seam, independent review HOLD, not cleared for merge**. TASK_ID: `ISSUE27_M1B_CPU_RESPONSE_SEAM`. Based on M1A PR #66 HEAD `a7fe8418b280332ad0220443bb27e489cf344adb`. Merge M1A **not** authorised; M1B must land after it and must not silently become a production deployment.
 
 ## Problem and chosen design
 
@@ -46,3 +46,9 @@ M1B cannot prove real model decoding, Engine wait/admission and real network dis
 ## Operating contract
 
 ChatGPT first prepares the repo artifacts. OpenClaw MAIN is authorised for bounded host-only engineering/validation and deterministic retries, with LOCAL-WORKER first and SOL escalation only after two genuine engineering failures. Avoid repeated malformed tool invocations. **No intermediate Telegram or ChatGPT approval requests** for work inside the authorised scope. Stop only at a validated draft PR for independent review or consolidated architecture/security blocker. Never run CUDA/GPU, modify live services, merge, deploy, force-push or close Issue #27.
+
+## Current implementation and review status (2026-10-10)
+
+Implementation now exists on draft PR #67. Host-only projection, M0 parser and M1A validator suites, CPU syntax and diff check passed at source commit `1b7ea267a7fd2ab7d6a8009f5f122c0c2dc9ccf6`; the reported projection suite had zero failures. The production path deliberately buffers content until terminal validation. The prior plan-only language above describes the original design state rather than current achievement.
+
+**Independent review outcome: HOLD, not merge-ready.** The acceptance matrix remains unsatisfied or insufficiently evidenced for incomplete prefix `Safe <tool_` (test currently permits it), quoted/alternate markers, immediate reasoning-channel publication, HTTP disconnect/Responses API encoder behavior, real-model tool loop, and protocol compatibility/latency trade-offs. See `docs/issue27-m1a-m1b-independent-review-2026-10-10.md` for exact code paths, verified scope, residual risks, release order and re-review conditions. No further implementation in this review cycle.
