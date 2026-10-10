@@ -526,7 +526,14 @@ bool ProgramImplCore::can_admit_lane_after_retained_eviction(
                                   reclaimable_pages, new_pages, pool.entitled_pages(),
                                   pool.logical_page_capacity(), pool.page_group_count());
         }
-        return reason == runtime::Issue58KvDenial::None;
+        // Preserve the exact original scheduler predicate independently of diagnostics.
+        if (old_pages > pool.entitled_pages() ||
+            reclaimable_pages > pool.entitled_pages() - old_pages ||
+            new_pages > pool.logical_page_capacity()) {
+            return false;
+        }
+        const std::uint32_t committed = pool.entitled_pages() - old_pages - reclaimable_pages;
+        return new_pages <= pool.page_group_count() - committed;
     };
 
     const SequenceState& sequence = sequences[lane];
