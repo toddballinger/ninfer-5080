@@ -37,7 +37,7 @@ class TimelineTests(unittest.TestCase):
                                event("request_start", 1, 20),
                                event("request_start", 1, 22)])
         self.assertIn("duplicate_start", report["records"][0]["anomalies"])
-        self.assertIn("terminal_before_start", report["records"][0]["anomalies"])
+        self.assertIn("terminal_before_start", report["records"][0]["anomalies"])\n        self.assertIsNone(report["records"][0]["start_to_terminal_ms"])
 
     def test_multiple_terminal(self):
         report = self.inspect([event("request_start", 1, 1),
