@@ -518,13 +518,17 @@ bool ProgramImplCore::can_admit_lane_after_retained_eviction(
     const auto can_replace = [lane](const PagedKVPool& pool, std::uint32_t old_pages,
                                     std::uint32_t reclaimable_pages, std::uint32_t new_pages,
                                     const char* pool_name) {
-        const auto reason = runtime::issue58_kv_denial(
-            old_pages, reclaimable_pages, new_pages, pool.entitled_pages(),
-            pool.logical_page_capacity(), pool.page_group_count());
-        if (reason != runtime::Issue58KvDenial::None) {
-            issue58_log_kv_denial(lane, "after_retained_eviction", pool_name, reason, old_pages,
-                                  reclaimable_pages, new_pages, pool.entitled_pages(),
-                                  pool.logical_page_capacity(), pool.page_group_count());
+        // Avoid additional diagnostic arithmetic on the default (trace-disabled) hot path.
+        const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
+        if (trace && trace[0] == '1' && trace[1] == '\0') {
+            const auto reason = runtime::issue58_kv_denial(
+                old_pages, reclaimable_pages, new_pages, pool.entitled_pages(),
+                pool.logical_page_capacity(), pool.page_group_count());
+            if (reason != runtime::Issue58KvDenial::None) {
+                issue58_log_kv_denial(lane, "after_retained_eviction", pool_name, reason, old_pages,
+                                      reclaimable_pages, new_pages, pool.entitled_pages(),
+                                      pool.logical_page_capacity(), pool.page_group_count());
+            }
         }
         // Preserve the exact original scheduler predicate independently of diagnostics.
         if (old_pages > pool.entitled_pages() ||
