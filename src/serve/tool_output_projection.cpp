@@ -89,7 +89,7 @@ void ProjectedContentStream::final_content(std::string content) {
 ProjectedToolOutput ProjectedContentStream::finalise() {
     if (finished_) { throw std::logic_error("ProjectedContentStream was already finalised"); }
     finished_ = true;
-    const ProjectedToolOutput projection = project_impl(final_content_, policy_);
+    ProjectedToolOutput projection = project_impl(final_content_, policy_);
     // The filter flushes only what it has not yet released: the safe
     // pre-marker tail for plain text, nothing for tool responses.
     const std::string residual = filter_->finish(projection.is_tool_call_response);
