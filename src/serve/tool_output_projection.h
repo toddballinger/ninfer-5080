@@ -92,7 +92,7 @@ private:
 // Engine-side sink adapter for ProjectedContentStream. Reasoning deltas are
 // forwarded to on_reasoning; content deltas pass through the projection
 // filter. The sink holds no other state.
-class ProjectedContentSink final : public ninfer::OutputSink {
+class ProjectedContentSink : public ninfer::OutputSink {
 public:
     ProjectedContentStream* stream = nullptr;
     std::function<void(const std::string&)> on_content;
