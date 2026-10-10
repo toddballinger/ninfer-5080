@@ -58,27 +58,15 @@ ProjectedToolOutput project_tool_output(const std::string& generated_content,
 
 std::string ProjectedContentStream::feed(std::string_view delta) {
     if (finished_ || delta.empty()) { return {}; }
-    std::string released = feed_visible(delta);
-    std::string buffered;
-    if (released.empty()) { buffered = std::string(delta); }
-    buffered_content_ += std::move(buffered);
-    if (!released.empty()) { streamed_content_bytes_ += released.size(); }
-    return released;
+    // Conservative atomic-commit policy: no content bytes escape before the
+    // complete model output has been strictly parsed and schema validated.
+    buffered_content_.append(delta);
+    return {};
 }
 
-std::string ProjectedContentStream::feed_visible(std::string_view delta) {
-    // Release exactly what the stream filter proved safe; reasoning and
-    // other channels never reach this filter (the sink adapter routes them).
-    const std::string visible = filter_->feed(delta);
-    if (policy_.tool_capable()) {
-        // A tool-capable request must not emit any text while a tool marker
-        // region is still buffered: the marker bytes are held back and the
-        // pre-marker pending tail is not released until the commit point.
-        if (visible.empty() && filter_->emitted_bytes() > streamed_content_bytes_) {
-            return {};
-        }
-    }
-    return visible;
+std::string ProjectedContentStream::feed_visible(std::string_view) {
+    // Kept as a private ABI-neutral helper; no pre-commit publication.
+    return {};
 }
 
 void ProjectedContentStream::final_content(std::string content) {
@@ -90,27 +78,10 @@ ProjectedToolOutput ProjectedContentStream::finalise() {
     if (finished_) { throw std::logic_error("ProjectedContentStream was already finalised"); }
     finished_ = true;
     ProjectedToolOutput projection = project_impl(final_content_, policy_);
-    // The filter flushes only what it has not yet released: the safe
-    // pre-marker tail for plain text, nothing for tool responses.
-    const std::string residual = filter_->finish(projection.is_tool_call_response);
-    if (!projection.is_tool_call_response && !projection.visible_text.empty()) {
-        // Safe prose was released incrementally before the commit point; the
-        // terminal projection adds only the not-yet-released residual tail so
-        // the visible text is published exactly once, in full.
-        if (buffered_content_.empty()) { projection.visible_text += residual; }
-        buffered_content_.clear();
-    } else {
-        // Refused (fail-closed) or tool projection: the pre-commit buffer is
-        // discarded without flushing, so no unsanitised content leaks to any
-        // sink; the visible text (possibly empty) is the commit-point release.
-        buffered_content_.clear();
-    }
-    // Invariant: pre-commit releases are a prefix of the terminal projection,
-    // never an over-release. (Safe prose: prefix + residual == terminal;
-    // tool/refused: pre-commit bytes only precede the visible prefix.)
-    if (streamed_content_bytes_ > projection.visible_text.size()) {
-        streamed_content_bytes_ = projection.visible_text.size();
-    }
+    // The caller publishes visible_text exactly once at this commit point.
+    // streamed_content_bytes() counts only bytes published by feed(), i.e. 0.
+    buffered_content_.clear();
+    final_content_.clear();
     return projection;
 }
 
