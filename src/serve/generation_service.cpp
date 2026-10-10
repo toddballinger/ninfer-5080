@@ -406,7 +406,9 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
         const ProjectedToolOutput finalised = output_sink->finalise();
         outcome.text             = finalised.visible_text;
         outcome.tool_calls       = finalised.validated_calls;
-        outcome.streamed_content_bytes = output_sink->owned_stream_.streamed_content_bytes();
+        outcome.streamed_content_bytes =
+            (output_sink->on_content && !finalised.visible_text.empty())
+                ? finalised.visible_text.size() : 0;
     } else {
         const ProjectedToolOutput projected =
             project_tool_output(result.content, projection_policy);
