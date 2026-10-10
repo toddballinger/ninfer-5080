@@ -2061,7 +2061,7 @@ private:
                         !protection_ ? "none" :
                             protection_->phase == ProtectionPhase::Drain ? "drain" : "open");
                     for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
-                        std::fprintf(stderr, "[ADMISSION-LANE] head=%llu lane=%u result=%s\\n",
+                        std::fprintf(stderr, "[ADMISSION-LANE] head=%llu lane=%u result=%s\n",
                             static_cast<unsigned long long>(head->id), lane,
                             issue58_lane_evidence_name(head_lane_evidence[lane]));
                     }
