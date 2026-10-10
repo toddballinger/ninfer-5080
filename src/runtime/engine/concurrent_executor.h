@@ -11,6 +11,7 @@
 #include "runtime/contract/decision_routing.h"
 #include "runtime/engine/admission_policy.h"
 #include "runtime/engine/issue58_deferral_reason.h"
+#include "runtime/engine/issue58_lane_evidence.h"
 #include "runtime/engine/request_memory.h"
 #include "runtime/engine/decision_execution.h"
 #include "runtime/generation/generation_budget.h"
@@ -1752,19 +1753,25 @@ private:
     }
 
     [[nodiscard]] std::optional<LaneChoice>
-    find_admission_lane(const std::shared_ptr<Request>& request) {
+    find_admission_lane(const std::shared_ptr<Request>& request,
+                        std::array<Issue58LaneEvidence, kMaximumConcurrency>* evidence = nullptr) {
         // The reservation must be enforced on the shared admission path,
         // before either FIFO or protected-backfill can choose a lane.
+        if (evidence) { evidence->fill(Issue58LaneEvidence::PlanUnavailable); }
         if (long_lane_guard(request)) { return std::nullopt; }
         std::optional<LaneChoice> selected;
         std::uint32_t selected_reuse = 0;
         for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
-            if (slots_[lane] != nullptr) { continue; }
+            if (slots_[lane] != nullptr) {
+                if (evidence) { (*evidence)[lane] = Issue58LaneEvidence::Occupied; }
+                continue;
+            }
             ensure_lane_plan(request, lane);
             const Plan& plan          = *request->lane_plans[lane];
             const std::uint32_t reuse = plan.summary().reusable_prompt_tokens;
-            if (instance_.program->can_admit_lane(lane, plan) &&
-                (!selected || reuse > selected_reuse)) {
+            const bool direct_fit = instance_.program->can_admit_lane(lane, plan);
+            if (evidence) { (*evidence)[lane] = issue58_lane_evidence(false, true, direct_fit, false); }
+            if (direct_fit && (!selected || reuse > selected_reuse)) {
                 selected       = LaneChoice{.lane = lane};
                 selected_reuse = reuse;
             }
@@ -1776,8 +1783,11 @@ private:
             ensure_lane_plan(request, lane);
             const Plan& plan          = *request->lane_plans[lane];
             const std::uint32_t reuse = plan.summary().reusable_prompt_tokens;
-            if (instance_.program->can_admit_lane_after_retained_eviction(lane, plan) &&
-                (!selected || reuse > selected_reuse)) {
+            const bool eviction_fit = instance_.program->can_admit_lane_after_retained_eviction(lane, plan);
+            if (evidence) {
+                (*evidence)[lane] = issue58_lane_evidence(false, true, false, eviction_fit);
+            }
+            if (eviction_fit && (!selected || reuse > selected_reuse)) {
                 selected = LaneChoice{
                     .lane           = lane,
                     .evict_retained = true,
@@ -1952,9 +1962,10 @@ private:
                 continue;
             }
 
+            std::array<Issue58LaneEvidence, kMaximumConcurrency> head_lane_evidence{};
             std::optional<LaneChoice> head_lane;
             try {
-                head_lane = find_admission_lane(head);
+                head_lane = find_admission_lane(head, &head_lane_evidence);
             } catch (...) {
                 (void)remove_pending_error(head, std::current_exception());
                 control_progress = true;
@@ -2049,6 +2060,11 @@ private:
                         static_cast<unsigned long long>(protection_ ? protection_->epoch_id : 0),
                         !protection_ ? "none" :
                             protection_->phase == ProtectionPhase::Drain ? "drain" : "open");
+                    for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                        std::fprintf(stderr, "[ADMISSION-LANE] head=%llu lane=%u result=%s\\n",
+                            static_cast<unsigned long long>(head->id), lane,
+                            issue58_lane_evidence_name(head_lane_evidence[lane]));
+                    }
                 }
             }
             if (active.size == 0) {
