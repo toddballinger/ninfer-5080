@@ -254,8 +254,10 @@ int test_regression_corpus() {
     accepted("quoted-think-close-before-valid-call", CorpusCategory::quoted,
              quoted_think_close + "\n" + first, 64, quoted_think_close,
              {{"first", Json{{"value", 1}}}});
+    // With no <tool_call> marker, the filter can publish all of this text
+    // during feed(); finish(false) adds nothing. This is not a suppressed region.
     fallback("quoted-think-close-without-tool", CorpusCategory::quoted,
-             quoted_think_close);
+             quoted_think_close, 64, quoted_think_close);
 
     const std::string harmless_reasoning =
         "<think>Quoted \"<function=example>\" and \"<parameter=x>\".</think>";
