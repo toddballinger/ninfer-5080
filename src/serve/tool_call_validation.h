@@ -23,6 +23,34 @@ struct ToolValidationResult {
 namespace detail {
 using Json = nlohmann::json;
 
+// nlohmann::json normally overwrites duplicate object members. Detect them
+// during parsing, before a last-key-wins object can pass schema validation.
+// Object scopes are independent, including objects nested inside arrays.
+inline Json parse_unique_keys(const std::string& raw, bool& duplicated) {
+    duplicated = false;
+    std::vector<std::set<std::string>> object_scopes;
+    const auto callback = [&](int, Json::parse_event_t event, Json& value) {
+        switch (event) {
+        case Json::parse_event_t::object_start:
+            object_scopes.emplace_back();
+            break;
+        case Json::parse_event_t::key:
+            if (object_scopes.empty() ||
+                !object_scopes.back().insert(value.get<std::string>()).second) {
+                duplicated = true;
+            }
+            break;
+        case Json::parse_event_t::object_end:
+            if (!object_scopes.empty()) { object_scopes.pop_back(); }
+            break;
+        default:
+            break;
+        }
+        return true; // do not discard keys before detection
+    };
+    return Json::parse(raw, callback, false);
+}
+
 inline bool supported_schema(const Json& schema, unsigned depth = 0) {
     if (!schema.is_object() || depth > 16) { return false; }
     static const std::set<std::string> keys = {
@@ -138,12 +166,17 @@ inline ToolValidationResult validate_candidate_calls(
             if (candidate.name == call.name) { def = &candidate; break; }
         }
         if (def == nullptr) { reject("UNDECLARED_TOOL"); continue; }
-        const auto args = detail::Json::parse(call.arguments_json, nullptr, false);
+        bool duplicate_args = false;
+        const auto args = detail::parse_unique_keys(call.arguments_json, duplicate_args);
+        if (duplicate_args) { reject("DUPLICATE_PARAMETER"); continue; }
         if (args.is_discarded() || !args.is_object()) {
             reject("ARGUMENT_JSON_INVALID"); continue;
         }
-        const auto schema = detail::Json::parse(def->parameters_json, nullptr, false);
-        if (schema.is_discarded() || !detail::supported_schema(schema)) {
+        bool duplicate_schema_keys = false;
+        const auto schema = detail::parse_unique_keys(def->parameters_json,
+                                                       duplicate_schema_keys);
+        if (duplicate_schema_keys || schema.is_discarded() ||
+            !detail::supported_schema(schema)) {
             reject("SCHEMA_UNSUPPORTED"); continue;
         }
         if (!detail::value_matches(args, schema)) {
