@@ -1,6 +1,6 @@
 # Issue #27 M1A — caller-declared tool and argument validation
 
-Status: **implementation plan, NOT runtime implementation or validation**. TASK_ID `ISSUE27_M1A_DECLARED_TOOL_VALIDATION`. Branch starts from M0B squash merge `318bc8a1378d3d02302a2708831235db13520b75`. Merge PR #64 = M0 baseline, PR #65 = M0B desired contract. This document is the bounded engineering specification for the **next implementation PR**.
+Status: **initial design plan; M1A implementation now exists on draft PR #66, independently reviewed HOLD (2026-10-10).** TASK_ID `ISSUE27_M1A_DECLARED_TOOL_VALIDATION`. Branch starts from M0B squash merge `318bc8a1378d3d02302a2708831235db13520b75`. Merge PR #64 = M0 baseline, PR #65 = M0B desired contract. This document is the bounded engineering specification for the **next implementation PR**.
 
 ## Objective and safety invariant
 
@@ -69,3 +69,9 @@ STOP and return a design blocker if: available JSON Schema semantics cannot be e
 **ChatGPT:** research, inspect code, prepare this spec, GitHub-safe bounded edits and PR review. **OpenClaw:** verify actual build linkage/CPU-only test route, compile/execute, identify host issues; if local worker tool formatting fails, do not loop equivalent attempts, return exact GitHub-editable change to ChatGPT. Keep LOCAL engineering strikes separate from model-output failures. No production deploy, service reload, CUDA/GPU use, auto-merge, or Issue #27 closure.
 
 **Milestone handoff target:** next draft PR with a tested isolated validator plus safe output-boundary integration, or a consolidated explicit security blocker; do not claim M1A complete from this planning artifact alone.
+
+## Latest status / dependent gate (2026-10-10)
+
+M1A implementation exists on draft PR #66; the standalone validator, JSON/XML duplicate rejection, request-policy copies and host-only syntax/test stages were reported passing at code commit `a7fe8418b280332ad0220443bb27e489cf344adb`. This is not production or HTTP end-to-end validation. The text above is the original plan and should not be read as the current implementation inventory.
+
+The final response emission trust boundary is implemented/tested on dependent draft PR #67, which targets PR #66's branch. Its CPU suite was reported passing at code commit `1b7ea267a7fd2ab7d6a8009f5f122c0c2dc9ccf6`, followed by **documentation-only review commits**. The independent decision is **HOLD**, not approval: incomplete tool-marker prefixes, reasoning-channel gating, stream/finish protocol parity, network disconnect and true agent/model loop require bounded re-review. See `docs/issue27-m1a-m1b-independent-review-2026-10-10.md` on PR #67 for the authoritative snapshot and release gates. Do not merge PR #66 separately, deploy, or close Issue #27 without explicit authorisation.
