@@ -12,7 +12,7 @@ PATTERNS = {
     "deferral": re.compile(r"^\[ADMISSION-DEFERRAL\] head=(\d+) queued=(\d+) reason=([a-z_]+)$"),
     "kv": re.compile(r"^\[ADMISSION-KV-DENIAL\] lane=(\d+) path=([a-z_]+) pool=(main|backend) cause=([a-z_]+) old=(\d+) reclaimable=(\d+) requested=(\d+) entitled=(\d+) logical=(\d+) physical=(\d+)$"),
 }
-QUEUE = re.compile(r"^\[ADMISSION-TRACE\] head=(\d+) queued=(\d+) active=(\d+) reason=([a-z_]+) ")
+QUEUE = re.compile(\n    r"^\[ADMISSION-TRACE\] head=(\d+) queued=(\d+) active=(\d+) reason=([a-z_]+) "\n    r"head_pages_main=(\d+) head_pages_backend=(\d+) "\n    r"used_pages_main=(\d+) used_pages_backend=(\d+) used_lanes=(\d+) "\n    r"capacity_pages_main=(\d+) capacity_pages_backend=(\d+) capacity_lanes=(\d+) "\n    r"deadline_remaining_ms=(-?\d+) protection_epoch=(\d+) protection_phase=(none|drain|open)$"\n)
 VALID_LANES = {"occupied", "plan_unavailable", "direct_admittable", "retained_eviction_admittable", "not_admittable"}
 VALID_REASONS = {"short_lane_policy_hold", "no_vacant_lane", "vacant_lane_not_admittable"}
 VALID_CAUSES = {"invalid_old_entitlement", "invalid_reclaimable_entitlement", "exceeds_logical_capacity", "insufficient_physical_pages"}
@@ -56,7 +56,7 @@ def audit(paths):
                     counts[name] += 1
                     break
                 if not found:
-                    match = QUEUE.match(line)
+                    match = QUEUE.fullmatch(line)
                     if match:
                         if match.group(4) not in VALID_REASONS:
                             errors.append(f"{path}:{index}: invalid summary reason")
