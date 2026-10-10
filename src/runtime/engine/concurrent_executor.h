@@ -12,6 +12,7 @@
 #include "runtime/engine/admission_policy.h"
 #include "runtime/engine/issue58_deferral_reason.h"
 #include "runtime/engine/issue58_lane_evidence.h"
+#include "runtime/engine/issue58_queue_timing.h"
 #include "runtime/engine/request_memory.h"
 #include "runtime/engine/decision_execution.h"
 #include "runtime/generation/generation_budget.h"
@@ -242,6 +243,7 @@ public:
                                    "inference engine is unavailable");
             }
             pending_.push_back(request);
+            request->issue58_enqueued = Clock::now();
         }
         queue_cv_.notify_one();
         return Submission(*this, std::move(request));
@@ -332,6 +334,7 @@ public:
 
             pending_.push_back(
                 request);
+            request->issue58_enqueued = Clock::now();
         }
 
         queue_cv_.notify_one();
@@ -516,6 +519,7 @@ private:
         ResolvedRequestOptions options;
         Clock::time_point deadline;
         Clock::time_point submitted;
+        Clock::time_point issue58_enqueued{};
         std::optional<Clock::time_point> first_token;
         std::optional<GenerationBudget> budget;
         std::optional<BeginSummary> begin;
@@ -1848,6 +1852,18 @@ private:
         Plan selected_plan = std::move(*request->lane_plans[lane]);
         request->lane_plans[lane].reset();
         if (!erase_pending(request)) { return AdmissionProgress::None; }
+        // Measured from completed queue insertion to removal for selected admission.
+        // This is not GPU-start latency, TTFT or a wall-clock admission timestamp.
+        if (const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
+            trace && trace[0] == '1' && trace[1] == '\0') {
+            const auto dequeue_time = Clock::now();
+            std::fprintf(stderr,
+                "[ADMISSION-QUEUE-TIMING] id=%llu lane=%u queue_wait_ms=%lld "
+                "event=selected_for_admission\n",
+                static_cast<unsigned long long>(request->id), lane,
+                static_cast<long long>(issue58_queue_wait_ms<Clock>(
+                    request->issue58_enqueued, dequeue_time)));
+        }
         release_planning_state(request);
 
         const RequestPlanSummary summary = selected_plan.summary();
