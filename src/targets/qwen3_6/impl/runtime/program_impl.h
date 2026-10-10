@@ -4,6 +4,7 @@
 #include "targets/qwen3_6/impl/runtime/schedule.h"
 #include "runtime/contract/decision_resources.h"
 #include "runtime/engine/issue58_yield_boundary_facts.h"
+#include "runtime/engine/issue58_kv_denial.h"
 #include "ninfer/ops/gdn_replay.h"
 #include "ninfer/ops/constrained_choice.h"
 #include "ninfer/ops/prepare_ragged_prefix.h"
@@ -16,6 +17,8 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -25,6 +28,25 @@ namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+// Opt-in diagnostic. No new admission or eviction checks; no payload logging.
+void issue58_log_kv_denial(std::uint32_t lane, const char* path, const char* pool_name,
+                           runtime::Issue58KvDenial reason, std::uint32_t old_pages,
+                           std::uint32_t reclaimable, std::uint32_t new_pages,
+                           std::uint32_t entitled, std::uint32_t logical,
+                           std::uint32_t physical) noexcept {
+    const char* enabled = std::getenv("NINFER_ADMISSION_TRACE");
+    if (!enabled || enabled[0] != '1' || enabled[1] != '\0') { return; }
+    thread_local Clock::time_point last{};
+    const auto now = Clock::now();
+    if (last != Clock::time_point{} && now - last < std::chrono::seconds(10)) { return; }
+    last = now;
+    std::fprintf(stderr,
+        "[ADMISSION-KV-DENIAL] lane=%u path=%s pool=%s cause=%s old=%u "
+        "reclaimable=%u requested=%u entitled=%u logical=%u physical=%u\n",
+        lane, path, pool_name, runtime::issue58_kv_denial_name(reason),
+        old_pages, reclaimable, new_pages, entitled, logical, physical);
+}
 
 std::int32_t checked_i32(std::uint32_t value, const char* label) {
     if (value > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
@@ -448,20 +470,30 @@ bool ProgramImplCore::can_admit_lane(std::uint32_t lane, const RequestPlan& plan
         return false;
     }
     const SequenceState& sequence = sequences[lane];
-    const auto can_replace        = [](const PagedKVPool& pool, std::uint32_t old_pages,
-                                std::uint32_t new_pages) {
-        return old_pages <= pool.entitled_pages() && new_pages <= pool.logical_page_capacity() &&
-               new_pages <= pool.page_group_count() - (pool.entitled_pages() - old_pages);
+    const auto can_replace = [lane](const PagedKVPool& pool, std::uint32_t old_pages,
+                                    std::uint32_t new_pages, const char* pool_name) {
+        const bool accepted =
+            old_pages <= pool.entitled_pages() && new_pages <= pool.logical_page_capacity() &&
+            new_pages <= pool.page_group_count() - (pool.entitled_pages() - old_pages);
+        if (!accepted) {
+            issue58_log_kv_denial(
+                lane, "direct", pool_name,
+                runtime::issue58_kv_denial(old_pages, 0, new_pages, pool.entitled_pages(),
+                                           pool.logical_page_capacity(), pool.page_group_count()),
+                old_pages, 0, new_pages, pool.entitled_pages(),
+                pool.logical_page_capacity(), pool.page_group_count());
+        }
+        return accepted;
     };
     const std::uint32_t old_text = sequence.kv ? sequence.kv->text.page_entitlement() : 0;
-    if (!can_replace(decoder->text_kv.pool(), old_text, plan.impl_->text_kv_page_entitlement)) {
+    if (!can_replace(decoder->text_kv.pool(), old_text, plan.impl_->text_kv_page_entitlement, "main")) {
         return false;
     }
     const qwen3_6::PagedKVCache* backend = backend_kv_cache();
     if (backend == nullptr) { return plan.impl_->backend_kv_page_entitlement == 0; }
     const std::uint32_t old_backend =
         sequence.kv && sequence.kv->backend ? sequence.kv->backend->page_entitlement() : 0;
-    return can_replace(backend->pool(), old_backend, plan.impl_->backend_kv_page_entitlement);
+    return can_replace(backend->pool(), old_backend, plan.impl_->backend_kv_page_entitlement, "backend");
 }
 
 bool ProgramImplCore::can_admit_lane_after_retained_eviction(
@@ -483,21 +515,24 @@ bool ProgramImplCore::can_admit_lane_after_retained_eviction(
         }
     }
 
-    const auto can_replace = [](const PagedKVPool& pool, std::uint32_t old_pages,
-                                std::uint32_t reclaimable_pages, std::uint32_t new_pages) {
-        if (old_pages > pool.entitled_pages() ||
-            reclaimable_pages > pool.entitled_pages() - old_pages ||
-            new_pages > pool.logical_page_capacity()) {
-            return false;
+    const auto can_replace = [lane](const PagedKVPool& pool, std::uint32_t old_pages,
+                                    std::uint32_t reclaimable_pages, std::uint32_t new_pages,
+                                    const char* pool_name) {
+        const auto reason = runtime::issue58_kv_denial(
+            old_pages, reclaimable_pages, new_pages, pool.entitled_pages(),
+            pool.logical_page_capacity(), pool.page_group_count());
+        if (reason != runtime::Issue58KvDenial::None) {
+            issue58_log_kv_denial(lane, "after_retained_eviction", pool_name, reason, old_pages,
+                                  reclaimable_pages, new_pages, pool.entitled_pages(),
+                                  pool.logical_page_capacity(), pool.page_group_count());
         }
-        const std::uint32_t committed = pool.entitled_pages() - old_pages - reclaimable_pages;
-        return new_pages <= pool.page_group_count() - committed;
+        return reason == runtime::Issue58KvDenial::None;
     };
 
     const SequenceState& sequence = sequences[lane];
     const std::uint32_t old_text  = sequence.kv ? sequence.kv->text.page_entitlement() : 0;
     if (!can_replace(decoder->text_kv.pool(), old_text, reclaimable_text,
-                     plan.impl_->text_kv_page_entitlement)) {
+                     plan.impl_->text_kv_page_entitlement, "main")) {
         return false;
     }
 
@@ -506,7 +541,7 @@ bool ProgramImplCore::can_admit_lane_after_retained_eviction(
     const std::uint32_t old_backend =
         sequence.kv && sequence.kv->backend ? sequence.kv->backend->page_entitlement() : 0;
     return can_replace(backend->pool(), old_backend, reclaimable_backend,
-                       plan.impl_->backend_kv_page_entitlement);
+                       plan.impl_->backend_kv_page_entitlement, "backend");
 }
 
 runtime::AdmissionResources ProgramImplCore::admission_capacity() const noexcept {
