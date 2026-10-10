@@ -189,17 +189,23 @@ void check_preparation_control(Clock::time_point deadline,
 
 class ServiceOutputSink final : public ProjectedContentSink {
 public:
-    // The projection component owns the policy snapshot and the strict
-    // stream filter; run() finalises it with the validated projection.
     ServiceOutputSink(const StreamSink& sink, const ToolOutputPolicy& policy)
-    { stream = std::make_unique<ProjectedContentStream>(policy); }
+        : owned_stream_(policy) {
+        stream = &owned_stream_;
+        on_content = sink.on_content;
+        on_reasoning = sink.on_reasoning;
+    }
 
-    // The stream owns the commit point: finalise() projects the full
-    // generated content through the production component and releases only
-    // the validated projection to the sink.
-    ProjectedToolOutput finalise() { return stream->finalise(); }
+    ProjectedToolOutput finalise() {
+        ProjectedToolOutput result = owned_stream_.finalise();
+        // No early content emissions: exactly one terminal commit.
+        if (!result.visible_text.empty() && on_content) {
+            on_content(result.visible_text);
+        }
+        return result;
+    }
 
-    std::unique_ptr<ProjectedContentStream> stream;
+    ProjectedContentStream owned_stream_;
 };
 
 } // namespace
@@ -396,11 +402,11 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     // releases only this validated projection at the commit point.
     outcome.reasoning         = std::move(result.reasoning);
     if (output_sink) {
-        output_sink->stream->final_content(result.content);
+        output_sink->owned_stream_.final_content(result.content);
         const ProjectedToolOutput finalised = output_sink->finalise();
         outcome.text             = finalised.visible_text;
         outcome.tool_calls       = finalised.validated_calls;
-        outcome.streamed_content_bytes = output_sink->stream->streamed_content_bytes();
+        outcome.streamed_content_bytes = output_sink->owned_stream_.streamed_content_bytes();
     } else {
         const ProjectedToolOutput projected =
             project_tool_output(result.content, projection_policy);
