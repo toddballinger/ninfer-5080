@@ -1,6 +1,6 @@
 # Issue #49 — Q3 SwiGLU T32 fallback route relevance, first bounded milestone
 
-**Status: ChatGPT-authored source-only route model / host tests; exact branch host validation pending. Not a runtime measurement and not a CUDA optimization.**
+**Status: host-validated source-only route model; independent review complete, merge approval pending. Not a runtime measurement and not a CUDA optimization.**
 
 Main base: `f510cf2f88b160c6b83fe294805fff6b9bc95e96` (after #69 merge). All route evidence below is taken from `src/ops/linear_swiglu/q3/q3_linear_swiglu.cu` at this base, not from a guessed generic GEMM policy.
 
@@ -43,3 +43,11 @@ Expected **6 tests**. One-shot host validation should record Python version, HEA
 ## ChatGPT → OpenClaw handover
 
 Complete source and tests on branch `automation/chatgpt/ISSUE49_Q3_T32_ROUTE_AUDIT`; PR draft contains this plan. MAIN should fetch expected PR head, verify clean worktree and base, run only the above host checks, capture exact evidence, and update draft PR. Perform at most two deterministic local fixes within these three files; otherwise return a single blocker report. No local-model worker required for simple Python tests; do not loop broken tool-call invocations. No merge, deployment, issue closure or intermediary Telegram updates. Return `ISSUE49_VALIDATED_DRAFT` or `ISSUE49_BLOCKED`. ChatGPT independently reviews the final diff, then asks human approval before merge.
+
+## Host validation and independent review (2026-10-10)
+
+OpenClaw MAIN verified code HEAD `153358806470b2a3c219f695346a3518180b3436` using Python 3.14.4: 6 unit tests RC0; py_compile RC0; sample JSONL CLI RC0 (25 synthetic operator calls, 7 calls with T32, 21 modelled T32 launches); git diff/scope checks RC0. Three intended files only. Evidence: https://github.com/toddballinger/ninfer-5080/pull/70#issuecomment-6096975860.
+
+Independent ChatGPT review inspected the entire three-file diff and its source route mapping. The dispatch model distinguishes T32-reaching operator calls from modelled kernel launches, explicitly gates the 257+ crossover on AllowA8, and does not infer runtime frequency or TTFT from a synthetic histogram. No production/CUDA edits. **Suitable for merge as a CPU audit utility only**, subject to human approval. The validation evidence attaches to the earlier code HEAD; this appended documentation changes no executable code.
+
+The next gate for Issue #49 is a separately authorised, representative measurement of actual operator shapes and latency on the qualified profile, not an automatic kernel retune. Leave Issue #49 OPEN.
