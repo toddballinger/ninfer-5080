@@ -369,6 +369,7 @@ if(NINFER_BUILD_SERVE)
     serve/anthropic_schema.cpp
     serve/response_store.cpp
     serve/tool_call_parser.cpp
+    serve/tool_output_projection.cpp
     serve/translate.cpp
     serve/console_log.cpp
     serve/generation_service.cpp
