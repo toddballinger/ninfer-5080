@@ -20,7 +20,7 @@ def residual(p, q):
     if len(p) != len(q):
         raise ValueError("vocabulary mismatch")
     weights = tuple(max(a - b, 0.0) for a, b in zip(p, q))
-    return None if math.fsum(weights) <= 1e-14 else normalize(weights)
+    return None if math.fsum(weights) == 0.0 else normalize(weights)
 
 
 def acceptance(p, q, token):
@@ -121,6 +121,15 @@ class SpeculativeOracleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             acceptance(p, q, 0)
         self.assert_dist(emitted_distribution(p, (1e-12, 1-1e-12, 0)), p)
+
+    def test_nearly_identical_distributions_keep_nonzero_residual(self):
+        # Tiny but nonzero rejection mass must not be rounded to zero
+        # by an arbitrary absolute cutoff.
+        p = (0.5 + 1e-15, 0.5 - 1e-15)
+        q = (0.5, 0.5)
+        self.assertIsNotNone(residual(p, q))
+        self.assert_dist(residual(p, q), (1.0, 0.0))
+        self.assert_dist(emitted_distribution(p, q), p)
 
     def test_greedy_boundary_and_ties(self):
         self.assertEqual(greedy_step((3, 2), 0), (0, True, False))
