@@ -1990,12 +1990,12 @@ private:
                 // Recheck on each completed GPU unit; do not enter Drain.
                 // Observational only: policy guard blocks this FIFO head.
                 if (const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
-                    trace && trace[0] == '1' && trace[1] == '\\0') {
+                    trace && trace[0] == '1' && trace[1] == '\0') {
                     const auto now = Clock::now();
                     if (last_admission_trace_ == Clock::time_point{} ||
                         now - last_admission_trace_ >= std::chrono::seconds(10)) {
                         last_admission_trace_ = now;
-                        std::fprintf(stderr, "[ADMISSION-DEFERRAL] head=%llu queued=%zu reason=%s\\n",
+                        std::fprintf(stderr, "[ADMISSION-DEFERRAL] head=%llu queued=%zu reason=%s\n",
                             static_cast<unsigned long long>(head->id), queued.size(),
                             issue58_deferral_reason_name(issue58_deferral_reason(true, false)));
                     }
