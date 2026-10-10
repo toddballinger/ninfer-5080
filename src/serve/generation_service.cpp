@@ -3,6 +3,7 @@
 #include "product/media_acquire/acquire.h"
 #include "serve/console_log.h"
 #include "serve/tool_call_parser.h"
+#include "serve/tool_call_validation.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -189,22 +190,29 @@ void check_preparation_control(Clock::time_point deadline,
 
 class ServiceOutputSink final : public ninfer::OutputSink {
 public:
-    ServiceOutputSink(const StreamSink& sink, bool filter_tool_calls)
-        : sink_(&sink), filter_tool_calls_(filter_tool_calls) {}
+    ServiceOutputSink(const StreamSink& sink, bool buffer_content)
+        : sink_(&sink), buffer_content_(buffer_content) {}
 
     void publish(ninfer::OutputDelta delta) override {
         if (delta.text.empty()) { return; }
         if (delta.channel == ninfer::OutputChannel::Reasoning) {
             if (sink_->on_reasoning) { sink_->on_reasoning(delta.text); }
+            return;
+        }
+        if (buffer_content_) {
+            // For tool-capable requests, never commit irreversible deltas
+            // until strict parsing and caller-schema validation have passed.
+            buffered_content_ += delta.text;
         } else {
-            std::string visible =
-                filter_tool_calls_ ? tool_filter_.feed(delta.text) : std::move(delta.text);
-            publish_content(visible);
+            publish_content(delta.text);
         }
     }
 
-    std::size_t finish(bool is_tool_call_response) {
-        if (filter_tool_calls_) { publish_content(tool_filter_.finish(is_tool_call_response)); }
+    std::size_t finish(const std::string& validated_text) {
+        if (buffer_content_) {
+            buffered_content_.clear();
+            publish_content(validated_text);
+        }
         return content_bytes_;
     }
 
@@ -216,8 +224,8 @@ private:
     }
 
     const StreamSink* sink_ = nullptr;
-    bool filter_tool_calls_ = false;
-    ToolCallStreamFilter tool_filter_;
+    bool buffer_content_ = false;
+    std::string buffered_content_;
     std::size_t content_bytes_ = 0;
 };
 
@@ -279,6 +287,8 @@ PreparedRequest GenerationService::prepare(const GenerationRequest& request,
     prepared.include_usage                 = request.include_usage;
     prepared.tool_capable                  = request.uses_tools() || request.has_tool_history();
     prepared.tool_name_max_length          = request.tool_name_max_length;
+    prepared.declared_tools                 = request.tools;
+    prepared.declared_tool_choice           = request.tool_choice;
     const ResolvedPromptSemantics semantics =
         resolve_prompt_semantics(request, options_, prompt_capabilities_);
     prepared.enable_thinking                   = semantics.enable_thinking;
@@ -359,7 +369,7 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
                                          std::function<bool()> is_cancelled) {
     std::unique_ptr<ServiceOutputSink> output_sink;
     if (sink != nullptr) {
-        output_sink = std::make_unique<ServiceOutputSink>(*sink, prepared.tool_capable);
+        output_sink = std::make_unique<ServiceOutputSink>(*sink, true);
     }
     ninfer::OutputSink* public_sink = output_sink.get();
     ninfer::CancellationView cancellation;
@@ -403,16 +413,32 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_accepted_per_position =
         std::move(result.speculative.accepted_per_position);
 
-    bool is_tool_call_response = false;
-    if (prepared.tool_capable) {
+    // Run strict markup handling for ALL responses, even tool-disabled requests.
+    // This keeps undeclared tool markup out of streamed and terminal content.
+    // Parse on every path, but only authorize calls from the originating request.
+    {
         ParsedToolCallOutput parsed =
-            parse_qwen_tool_call_output(outcome.text, prepared.tool_name_max_length);
-        outcome.text          = std::move(parsed.content);
-        is_tool_call_response = parsed.is_tool_call_response;
-        if (is_tool_call_response) { outcome.tool_calls = std::move(parsed.tool_calls); }
+            parse_qwen_tool_call_output_strict(outcome.text, prepared.tool_name_max_length);
+        if (parsed.is_tool_call_response) {
+            ToolValidationResult checked = validate_candidate_calls(
+                parsed.tool_calls, prepared.declared_tools, prepared.declared_tool_choice,
+                prepared.tool_name_max_length);
+            // Atomic fail-closed: never emit a subset whose rejected siblings
+            // could make a partial tool invocation misleading.
+            if (checked.rejection_codes.empty() &&
+                checked.accepted.size() == parsed.tool_calls.size()) {
+                outcome.tool_calls = std::move(checked.accepted);
+                outcome.text = std::move(parsed.content);
+            } else {
+                outcome.text.clear();
+                outcome.tool_calls.clear();
+            }
+        } else {
+            outcome.text = std::move(parsed.content);
+        }
     }
     if (output_sink) {
-        outcome.streamed_content_bytes = output_sink->finish(is_tool_call_response);
+        outcome.streamed_content_bytes = output_sink->finish(outcome.text);
     }
     return outcome;
 }

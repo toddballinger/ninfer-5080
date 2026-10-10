@@ -64,7 +64,8 @@ std::string new_tool_call_id() {
     return std::string(buf.data());
 }
 
-bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args) {
+bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args,
+                     bool reject_duplicates) {
     constexpr std::string_view kParamOpen  = "<parameter=";
     constexpr std::string_view kParamClose = "</parameter>";
     if (!starts_with_at(inner, pos, kParamOpen)) { return false; }
@@ -72,6 +73,7 @@ bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args) {
     const std::size_t name_end   = inner.find('>', name_begin);
     if (name_end == std::string_view::npos || name_end == name_begin) { return false; }
     const std::string key       = std::string(inner.substr(name_begin, name_end - name_begin));
+    if (reject_duplicates && args.contains(key)) { return false; }
     pos                         = name_end + 1;
     const std::size_t value_end = inner.find(kParamClose, pos);
     if (value_end == std::string_view::npos) { return false; }
@@ -82,7 +84,8 @@ bool parse_parameter(std::string_view inner, std::size_t& pos, Json& args) {
     return true;
 }
 
-bool parse_one_tool_call(std::string_view block, std::size_t max_name_length, ToolCall& out) {
+bool parse_one_tool_call(std::string_view block, std::size_t max_name_length, ToolCall& out,
+                         bool reject_duplicates) {
     constexpr std::string_view kFunctionOpen  = "<function=";
     constexpr std::string_view kFunctionClose = "</function>";
     std::size_t pos                           = 0;
@@ -103,7 +106,7 @@ bool parse_one_tool_call(std::string_view block, std::size_t max_name_length, To
     for (;;) {
         skip_ws(params, param_pos);
         if (param_pos >= params.size()) { break; }
-        if (!parse_parameter(params, param_pos, args)) { return false; }
+        if (!parse_parameter(params, param_pos, args, reject_duplicates)) { return false; }
     }
 
     pos = function_end + kFunctionClose.size();
@@ -124,8 +127,9 @@ ParsedToolCallOutput fallback(const std::string& text) {
 
 } // namespace
 
-ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
-                                                 std::size_t max_tool_name_length) {
+ParsedToolCallOutput parse_qwen_tool_call_output_impl(const std::string& text,
+                                                      std::size_t max_tool_name_length,
+                                                      bool strict) {
     constexpr std::string_view kToolOpen  = "<tool_call>";
     constexpr std::string_view kToolClose = "</tool_call>";
 
@@ -145,7 +149,7 @@ ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
         if (close == std::string::npos) { return fallback(text); }
         ToolCall call;
         if (!parse_one_tool_call(std::string_view(text).substr(inner_begin, close - inner_begin),
-                                 max_tool_name_length, call)) {
+                                 max_tool_name_length, call, strict)) {
             return fallback(text);
         }
         out.tool_calls.push_back(std::move(call));
@@ -155,6 +159,22 @@ ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
     if (out.tool_calls.empty()) { return fallback(text); }
     out.is_tool_call_response = true;
     return out;
+}
+
+ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
+                                                 std::size_t max_tool_name_length) {
+    return parse_qwen_tool_call_output_impl(text, max_tool_name_length, false);
+}
+
+ParsedToolCallOutput parse_qwen_tool_call_output_strict(const std::string& text,
+                                                        std::size_t max_tool_name_length) {
+    auto parsed = parse_qwen_tool_call_output_impl(text, max_tool_name_length, true);
+    // Fail closed for any malformed or duplicate tool markup. Do not turn a
+    // rejected candidate into visible assistant text; no tools are callable.
+    if (!parsed.is_tool_call_response && text.find("<tool_call>") != std::string::npos) {
+        return {};
+    }
+    return parsed;
 }
 
 std::string ToolCallStreamFilter::feed(std::string_view text) {

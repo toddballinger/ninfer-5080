@@ -75,6 +75,10 @@ struct PreparedRequest {
     bool include_usage                     = false;
     bool tool_capable                      = false;
     std::size_t tool_name_max_length       = 64;
+    // Immutable request-time snapshot for future fail-closed response validation.
+    // Not yet consumed by the response emission path (M1A integration pending).
+    std::vector<ToolDefinition> declared_tools;
+    ToolChoice declared_tool_choice;
     bool enable_thinking                   = true;
     std::optional<std::uint32_t> reasoning_budget;
     bool preserve_thinking                 = false;

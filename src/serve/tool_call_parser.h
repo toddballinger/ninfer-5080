@@ -18,6 +18,13 @@ struct ParsedToolCallOutput {
 ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
                                                  std::size_t max_tool_name_length);
 
+// Separate fail-closed candidate parser for future validated emission.
+// Unlike the legacy characterization parser, duplicate XML parameter names
+// never become a callable tool, and malformed tool markup is not returned
+// as user-visible raw assistant text. Not wired to generation yet.
+ParsedToolCallOutput parse_qwen_tool_call_output_strict(const std::string& text,
+                                                        std::size_t max_tool_name_length);
+
 // Incrementally publishes text that is provably outside a possible Qwen
 // <tool_call> suffix. At terminal time, a valid tool response discards the
 // buffered tool region; malformed/non-tool output flushes it verbatim.
