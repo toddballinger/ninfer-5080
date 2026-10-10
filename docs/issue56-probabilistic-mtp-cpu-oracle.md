@@ -1,6 +1,6 @@
 # Issue #56 — independent probabilistic MTP oracle (one-shot A3)
 
-**Status:** ChatGPT-authored CPU-only source and analytical fixtures; validation handover pending. No model/CUDA/runtime modifications. Parent #56 remains open.
+**Status:** Host reported 8 tests passing at earlier HEAD `b68f29891c4cd42f2b42fa134d4bd210e9d151ac`; subsequent independent review identified and corrected a near-zero residual cutoff. Updated 9-test HEAD requires revalidation. No model/CUDA/runtime modifications. Parent #56 remains open.
 
 ## Verified base and current source
 
@@ -25,7 +25,7 @@ The one-hot, zero-q, near-zero-q and equal-distribution cases are included. In t
 
 ## Tests and independent fixtures
 
-Eight Python `unittest` cases cover two-token exact example p=(.75,.25), q=(.25,.75), acceptance (1, 1/3), correction (1,0), 500 deterministic randomized marginal identities (including q zeros), near-zero/zero-q, equal distributions, greedy ties, EOS/EOG accepted-prefix stopping, seeded harness replay, correction/bonus shape and invalid-distribution inputs.
+Nine Python `unittest` cases cover two-token exact example p=(.75,.25), q=(.25,.75), acceptance (1, 1/3), correction (1,0), 500 deterministic randomized marginal identities (including q zeros), near-zero/zero-q, equal distributions, greedy ties, EOS/EOG accepted-prefix stopping, seeded harness replay, correction/bonus shape and invalid-distribution inputs.
 
 **Important boundaries:** Python's Random is a local deterministic test harness, **not** the NInfer GPU counter-based RNG. The `greedy_step` probe is mathematical boundary behavior, not a full CUDA temp-zero API equivalence check. The oracle's terminal handling is an external reference contract and not evidence that the deployed implementation already enforces it. In sampled float implementations, exact equality may vary with precision and finite numerics. This milestone establishes an independently calculated expected result, not GPU distribution parity.
 
@@ -49,3 +49,9 @@ Record Python version, exact branch/head/base, command RCs, case count, stdout/s
 Result: `ISSUE56_VALIDATED_DRAFT` with evidence published on PR, otherwise `ISSUE56_BLOCKED` identifying smallest correction. Leave PR draft for independent ChatGPT review, no auto-merge and no Issue #56 closure.
 
 **Explicit exclusions:** GPU/CUDA compile, real model or 128K benchmarks, MTP throughput sweep, changing production verification, OpenClaw service restart, model conversion, production deployment, or expanding this milestone into a new speculative algorithm.
+
+## Independent review and bounded correction (2026-10-10)
+
+OpenClaw reported 8 tests RC0, py_compile RC0, diff check RC0 on Python 3.14.4 for head `b68f29891c4cd42f2b42fa134d4bd210e9d151ac`; evidence: https://github.com/toddballinger/ninfer-5080/pull/69#issuecomment-6096813098.
+
+Independent ChatGPT review found one numerical edge-case risk: the CPU reference returned *no residual* whenever the positive residual mass was `<=1e-14`, although near-identical non-equal p/q can produce a tiny legitimate rejection and therefore requires a residual correction distribution. Replaced the arbitrary cutoff with an exact-zero check and added one explicit near-equal regression fixture. These are **test-only modifications**; production CUDA remains untouched. The exact updated branch requires rerun: nine tests expected; do not reuse previous 8-test PASS evidence to approve current HEAD. No merge/issue closure until independent review of the final verified head.
