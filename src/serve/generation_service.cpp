@@ -369,7 +369,7 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
                                          std::function<bool()> is_cancelled) {
     std::unique_ptr<ServiceOutputSink> output_sink;
     if (sink != nullptr) {
-        output_sink = std::make_unique<ServiceOutputSink>(*sink, prepared.tool_capable);
+        output_sink = std::make_unique<ServiceOutputSink>(*sink, true);
     }
     ninfer::OutputSink* public_sink = output_sink.get();
     ninfer::CancellationView cancellation;
@@ -413,9 +413,10 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_accepted_per_position =
         std::move(result.speculative.accepted_per_position);
 
-    if (prepared.tool_capable) {
-        // A strict parser rejects duplicate XML parameter names and suppresses
-        // malformed tool markup instead of exposing fallback text.
+    // Run strict markup handling for ALL responses, even tool-disabled requests.
+    // This keeps undeclared tool markup out of streamed and terminal content.
+    // Parse on every path, but only authorize calls from the originating request.
+    {
         ParsedToolCallOutput parsed =
             parse_qwen_tool_call_output_strict(outcome.text, prepared.tool_name_max_length);
         if (parsed.is_tool_call_response) {
