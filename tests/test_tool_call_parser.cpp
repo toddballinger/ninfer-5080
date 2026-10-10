@@ -380,6 +380,36 @@ int test_regression_corpus() {
     return failures;
 }
 
+int test_strict_xml_duplicate_rejection() {
+    const std::string duplicated =
+        "<tool_call>\n<function=get_weather>\n"
+        "<parameter=city>42</parameter>\n"
+        "<parameter=city>Paris</parameter>\n"
+        "</function>\n</tool_call>";
+    const std::string valid =
+        "<tool_call>\n<function=get_weather>\n"
+        "<parameter=city>Paris</parameter>\n"
+        "</function>\n</tool_call>";
+    int failures = 0;
+    const auto old = ninfer::serve::parse_qwen_tool_call_output(duplicated, 64);
+    failures += check(old.is_tool_call_response && old.tool_calls.size() == 1,
+                      "legacy duplicate characterization remains unchanged");
+    const auto rejected = ninfer::serve::parse_qwen_tool_call_output_strict(duplicated, 64);
+    failures += check(!rejected.is_tool_call_response && rejected.tool_calls.empty() &&
+                          rejected.content.empty(),
+                      "strict parser suppresses duplicate XML params without markup leak");
+    const auto good = ninfer::serve::parse_qwen_tool_call_output_strict(valid, 64);
+    failures += check(good.is_tool_call_response && good.tool_calls.size() == 1 &&
+                          Json::parse(good.tool_calls[0].arguments_json).at("city") == "Paris",
+                      "strict parser retains uniquely named valid parameters");
+    const std::string later = valid + "\n" + duplicated;
+    const auto rejected_later = ninfer::serve::parse_qwen_tool_call_output_strict(later, 64);
+    failures += check(!rejected_later.is_tool_call_response &&
+                          rejected_later.tool_calls.empty() && rejected_later.content.empty(),
+                      "strict parser cannot emit partial callable response with later duplicate");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -392,6 +422,7 @@ int main() {
     failures += test_incremental_filter_valid_tool();
     failures += test_incremental_filter_fallback();
     failures += test_regression_corpus();
+    failures += test_strict_xml_duplicate_rejection();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }
