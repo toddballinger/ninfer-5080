@@ -2,8 +2,7 @@
 
 #include "product/media_acquire/acquire.h"
 #include "serve/console_log.h"
-#include "serve/tool_call_parser.h"
-#include "serve/tool_call_validation.h"
+#include "serve/tool_output_projection.h"
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -188,45 +187,25 @@ void check_preparation_control(Clock::time_point deadline,
     }
 }
 
-class ServiceOutputSink final : public ninfer::OutputSink {
+class ServiceOutputSink final : public ProjectedContentSink {
 public:
-    ServiceOutputSink(const StreamSink& sink, bool buffer_content)
-        : sink_(&sink), buffer_content_(buffer_content) {}
-
-    void publish(ninfer::OutputDelta delta) override {
-        if (delta.text.empty()) { return; }
-        if (delta.channel == ninfer::OutputChannel::Reasoning) {
-            if (sink_->on_reasoning) { sink_->on_reasoning(delta.text); }
-            return;
-        }
-        if (buffer_content_) {
-            // For tool-capable requests, never commit irreversible deltas
-            // until strict parsing and caller-schema validation have passed.
-            buffered_content_ += delta.text;
-        } else {
-            publish_content(delta.text);
-        }
+    ServiceOutputSink(const StreamSink& sink, const ToolOutputPolicy& policy)
+        : owned_stream_(policy) {
+        stream = &owned_stream_;
+        on_content = sink.on_content;
+        on_reasoning = sink.on_reasoning;
     }
 
-    std::size_t finish(const std::string& validated_text) {
-        if (buffer_content_) {
-            buffered_content_.clear();
-            publish_content(validated_text);
+    ProjectedToolOutput finalise() {
+        ProjectedToolOutput result = owned_stream_.finalise();
+        // No early content emissions: exactly one terminal commit.
+        if (!result.visible_text.empty() && on_content) {
+            on_content(result.visible_text);
         }
-        return content_bytes_;
+        return result;
     }
 
-private:
-    void publish_content(const std::string& text) {
-        if (text.empty() || !sink_->on_content) { return; }
-        sink_->on_content(text);
-        content_bytes_ += text.size();
-    }
-
-    const StreamSink* sink_ = nullptr;
-    bool buffer_content_ = false;
-    std::string buffered_content_;
-    std::size_t content_bytes_ = 0;
+    ProjectedContentStream owned_stream_;
 };
 
 } // namespace
@@ -367,9 +346,15 @@ int GenerationService::count_prompt_tokens(const GenerationRequest& request,
 
 GenerationOutcome GenerationService::run(PreparedRequest& prepared, const StreamSink* sink,
                                          std::function<bool()> is_cancelled) {
+    // Request-time policy snapshot for the production projection component.
+    // Owned copies: the projection may outlive the originating request.
+    ToolOutputPolicy projection_policy;
+    projection_policy.declared_tools       = prepared.declared_tools;
+    projection_policy.declared_tool_choice = prepared.declared_tool_choice;
+    projection_policy.tool_name_max_length = prepared.tool_name_max_length;
     std::unique_ptr<ServiceOutputSink> output_sink;
     if (sink != nullptr) {
-        output_sink = std::make_unique<ServiceOutputSink>(*sink, true);
+        output_sink = std::make_unique<ServiceOutputSink>(*sink, projection_policy);
     }
     ninfer::OutputSink* public_sink = output_sink.get();
     ninfer::CancellationView cancellation;
@@ -385,8 +370,6 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
         result = prepared.generation.wait(public_sink, cancellation);
     } catch (const ninfer::RequestError& exception) { throw_request_error(exception); }
     GenerationOutcome outcome;
-    outcome.text              = std::move(result.content);
-    outcome.reasoning         = std::move(result.reasoning);
     outcome.prompt_tokens     = static_cast<int>(result.prompt.prompt_tokens);
     outcome.completion_tokens = static_cast<int>(result.generated_token_ids.size());
     outcome.reasoning_tokens  = static_cast<int>(result.reasoning_tokens);
@@ -413,32 +396,24 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.metrics.speculative_accepted_per_position =
         std::move(result.speculative.accepted_per_position);
 
-    // Run strict markup handling for ALL responses, even tool-disabled requests.
-    // This keeps undeclared tool markup out of streamed and terminal content.
-    // Parse on every path, but only authorize calls from the originating request.
-    {
-        ParsedToolCallOutput parsed =
-            parse_qwen_tool_call_output_strict(outcome.text, prepared.tool_name_max_length);
-        if (parsed.is_tool_call_response) {
-            ToolValidationResult checked = validate_candidate_calls(
-                parsed.tool_calls, prepared.declared_tools, prepared.declared_tool_choice,
-                prepared.tool_name_max_length);
-            // Atomic fail-closed: never emit a subset whose rejected siblings
-            // could make a partial tool invocation misleading.
-            if (checked.rejection_codes.empty() &&
-                checked.accepted.size() == parsed.tool_calls.size()) {
-                outcome.tool_calls = std::move(checked.accepted);
-                outcome.text = std::move(parsed.content);
-            } else {
-                outcome.text.clear();
-                outcome.tool_calls.clear();
-            }
-        } else {
-            outcome.text = std::move(parsed.content);
-        }
-    }
+    // Project the generated content through the production tool-output seam:
+    // strict markup parsing plus policy-gated schema validation, fail-closed
+    // for all responses (tool-capable or not). The stream (when present)
+    // releases only this validated projection at the commit point.
+    outcome.reasoning         = std::move(result.reasoning);
     if (output_sink) {
-        outcome.streamed_content_bytes = output_sink->finish(outcome.text);
+        output_sink->owned_stream_.final_content(result.content);
+        const ProjectedToolOutput finalised = output_sink->finalise();
+        outcome.text             = finalised.visible_text;
+        outcome.tool_calls       = finalised.validated_calls;
+        outcome.streamed_content_bytes =
+            (output_sink->on_content && !finalised.visible_text.empty())
+                ? finalised.visible_text.size() : 0;
+    } else {
+        const ProjectedToolOutput projected =
+            project_tool_output(result.content, projection_policy);
+        outcome.text       = projected.visible_text;
+        outcome.tool_calls = projected.validated_calls;
     }
     return outcome;
 }
