@@ -10,6 +10,7 @@
 #include "runtime/contract/types.h"
 #include "runtime/contract/decision_routing.h"
 #include "runtime/engine/admission_policy.h"
+#include "runtime/engine/issue58_deferral_reason.h"
 #include "runtime/engine/request_memory.h"
 #include "runtime/engine/decision_execution.h"
 #include "runtime/generation/generation_budget.h"
@@ -1987,6 +1988,18 @@ private:
                 // Deliberate policy hold: physical admission is possible, so
                 // the frozen-incumbent protection invariant does not apply.
                 // Recheck on each completed GPU unit; do not enter Drain.
+                // Observational only: policy guard blocks this FIFO head.
+                if (const char* trace = std::getenv("NINFER_ADMISSION_TRACE");
+                    trace && trace[0] == '1' && trace[1] == '\0') {
+                    const auto now = Clock::now();
+                    if (last_admission_trace_ == Clock::time_point{} ||
+                        now - last_admission_trace_ >= std::chrono::seconds(10)) {
+                        last_admission_trace_ = now;
+                        std::fprintf(stderr, "[ADMISSION-DEFERRAL] head=%llu queued=%zu reason=%s\n",
+                            static_cast<unsigned long long>(head->id), queued.size(),
+                            issue58_deferral_reason_name(issue58_deferral_reason(true, false)));
+                    }
+                }
                 protection_.reset();
                 return control_progress ? AdmissionProgress::ControlProgress
                                         : AdmissionProgress::None;
@@ -2010,13 +2023,20 @@ private:
                     }
                     const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         head->deadline - now).count();
+                    bool has_vacant_lane = false;
+                    for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+                        if (slots_[lane] == nullptr) { has_vacant_lane = true; break; }
+                    }
+                    const char* deferral_reason = issue58_deferral_reason_name(
+                        issue58_deferral_reason(false, has_vacant_lane));
                     std::fprintf(stderr,
-                        "[ADMISSION-TRACE] head=%llu queued=%zu active=%zu "
+                        "[ADMISSION-TRACE] head=%llu queued=%zu active=%zu reason=%s "
                         "head_pages_main=%llu head_pages_backend=%llu "
                         "used_pages_main=%llu used_pages_backend=%llu used_lanes=%llu "
                         "capacity_pages_main=%llu capacity_pages_backend=%llu capacity_lanes=%llu "
                         "deadline_remaining_ms=%lld protection_epoch=%llu protection_phase=%s\n",
                         static_cast<unsigned long long>(head->id), queued.size(), active.size,
+                        deferral_reason,
                         static_cast<unsigned long long>(head_base.admission.main_kv_pages),
                         static_cast<unsigned long long>(head_base.admission.backend_kv_pages),
                         static_cast<unsigned long long>(used_main),
