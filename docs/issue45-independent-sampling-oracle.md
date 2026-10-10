@@ -1,6 +1,6 @@
 # Issue #45 — independent CPU numerical sampling oracle (first one-shot)
 
-Status: **source and fixtures committed; execution pending external host**. This is an audit-only PR, not a CUDA sampler fix and not grounds to close issue #45.
+Status: **CPU-only fixture validation passed on OpenClaw host; independently reviewed, merge decision pending**. This is an audit-only PR, not a CUDA sampler fix and not grounds to close issue #45.
 
 ## Frozen base and source map
 
@@ -37,7 +37,7 @@ python3 -m py_compile tests/host/test_issue45_sampling_oracle.py
 git diff --check
 ```
 
-Expected 8 unit tests; status **NOT YET RUN ON BRAIN**. Do not claim PASS without actual return codes. Confirm no unexpected files or branch/base mismatch.
+OpenClaw validation on 2026-10-10 at source HEAD `0cc5c3361deae16db2d5f4c7a89c7bf612a7ac24` (Python 3.14.4): `python3 -B -m unittest -v tests/host/test_issue45_sampling_oracle.py` RC0, 8 tests; `python3 -m py_compile tests/host/test_issue45_sampling_oracle.py` RC0; `git diff --check` RC0; only this document and the standalone test changed. Evidence: PR #68 comment 6096693593. These are **host-reported**, not GPU/runtime observations.
 
 ## Findings and limitations
 
@@ -45,4 +45,8 @@ Source-level audit: the public contract and existing GPU-backed oracle describe 
 
 This first milestone ends with independently specified standalone fixtures and source mapping; it does **not** prove actual CUDA behavior, the no-thinking preset client mapping, statistical GPU sample distribution, or production performance. Those require separately authorised follow-up rather than enlarging this one-shot.
 
-OpenClaw LOCAL-WORKER's unexecuted `<tool_call>` output blocked implementation. ChatGPT authored this small fixture directly through GitHub instead. Do not count that formatting failure as an engineering strike. Keep Issue #45 open pending validation/review.
+OpenClaw LOCAL-WORKER's unexecuted `<tool_call>` output blocked implementation. ChatGPT authored this small fixture directly through GitHub instead. Do not count that formatting failure as an engineering strike. Keep Issue #45 open after this first milestone; runtime sampler parity and OpenClaw structured-output qualifications remain unverified.
+
+## Independent review (2026-10-10)
+
+Reviewed PR #68's complete two-file diff and host evidence. The eight numerical examples use independently specified integer-weight probability ratios, rather than GPU-generated expected results. In particular, the single-penalty and min-p/top-p denominator-order fixtures distinguish two known bug classes. The test implementation is a CPU *contract oracle*, not a test of NInfer's current CUDA implementation. Python's `random.Random` test is explicitly only a self-consistency check, not NInfer counter RNG equivalence. The code scope is isolated, changes no runtime behavior, and is **suitable for merge as an audit/test milestone, subject to operator approval**. This is not proof that GPU sampling matches the contract; leave #45 open for GPU equivalence and client sampling mapping, and do not represent the issue as fully complete.
