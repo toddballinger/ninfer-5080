@@ -55,7 +55,7 @@ void mtp_bridge_and_propose(PrefillContext& state, const Tensor& next_token,
     for (int i = 1; i < static_cast<int>(state.mtp_proposal_extent); ++i) {
         Tensor previous_token = state.execution.io.mtp->draft_tokens.slice(0, i - 1, 1);
         Tensor next_draft     = state.execution.io.mtp->draft_tokens.slice(0, i, 1);
-        Tensor next_hidden    = state.execution.prefill_hidden.slice(1, i, 1);
+        Tensor next_hidden = state.execution.work.alloc(DType::BF16, {TextConfig::hidden, 1});
         const auto visible    = static_cast<std::uint32_t>(position + i + 1);
         const ops::GqaExecutionEnvelope envelope{visible, visible};
         card.mtp_forward_ar_step(previous_token, state.execution.io.mtp->ar_hidden, ar_position,
